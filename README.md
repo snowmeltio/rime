@@ -1,27 +1,29 @@
-# Glimpse
+# Rime
 
-Auto-opens VS Code's markdown preview when you open a markdown file. Includes a clean reading stylesheet so your documents look like documents, not source code.
+**Auto-preview for markdown in VS Code.**
+
+Rime opens VS Code's built-in markdown preview whenever you open a `.md` file, and bundles a reading-optimised stylesheet. No clicks, no configuration. Designed for markdown-heavy workspaces — consulting deliverables, meeting notes, project documentation — where you almost always want to see the rendered version.
+
+![Light mode](https://raw.githubusercontent.com/snowmeltio/rime/main/media/screenshot-light.png) ![Dark mode](https://raw.githubusercontent.com/snowmeltio/rime/main/media/screenshot-dark.png)
 
 ## Features
 
-- **Auto-preview** — open a `.md` file, get the rendered preview. No extra clicks.
-- **Reading stylesheet** — serif body text, sans-serif headings, proper tables, dark mode. Designed for documents, not READMEs.
+- **Auto-preview** — open a `.md` file, get the rendered preview immediately.
+- **Reading stylesheet** — serif body text, sans-serif headings, proper tables, dark mode support. Designed for documents, not READMEs.
 - **Smart skip** — won't trigger in git diffs, PR reviews, or merge conflicts.
-- **Session aware** — each file is previewed once per session. Switching back won't re-trigger.
-- **Manual command** — `Cmd+Shift+M` (Mac) / `Ctrl+Shift+M` (Windows/Linux) if you need it.
+- **Session aware** — each file is previewed once per session. Switching tabs won't re-trigger.
+- **Manual command** — `Cmd+Shift+M` (Mac) / `Ctrl+Shift+M` (Windows/Linux) to open preview on demand.
 
-## Install
+## Requirements
 
-Install from the VS Code Marketplace, or from a `.vsix` file:
+- VS Code 1.77 or later
 
-```
-code --install-extension glimpse-1.0.0.vsix
-```
+## Licence
 
-## Why
+[PolyForm Shield 1.0.0](LICENSE.md)
 
-If you work in markdown-heavy workspaces — consulting deliverables, meeting notes, project documentation — you almost always want to see the rendered version. Glimpse just does it.
+Use it freely. Fork it, extend it, run it at work. The one restriction: don't sell it or use it to build a competing product.
 
-## License
+If you'd like to use Rime beyond the scope of the licence, get in touch at [murray@snowmelt.io](mailto:murray@snowmelt.io).
 
-MIT
+Copyright 2026 Snowmelt Consulting Pty Ltd.

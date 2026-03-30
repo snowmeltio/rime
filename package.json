@@ -1,13 +1,13 @@
 {
-    "name": "glimpse",
-    "displayName": "Glimpse",
+    "name": "rime",
+    "displayName": "Rime",
     "description": "Auto-opens markdown preview when you open a markdown file. Clean reading view with bundled stylesheet.",
     "version": "1.0.0",
-    "publisher": "snowmelt",
-    "license": "MIT",
+    "publisher": "snowmeltio",
+    "license": "SEE LICENSE IN LICENSE.md",
     "repository": {
         "type": "git",
-        "url": "https://github.com/snowmeltio/glimpse"
+        "url": "https://github.com/snowmeltio/rime"
     },
     "icon": "media/icon.png",
     "engines": {
@@ -25,17 +25,25 @@
     "activationEvents": [
         "onLanguage:markdown"
     ],
+    "scripts": {
+        "screenshots": "node scripts/screenshots.mjs",
+        "version": "node scripts/screenshots.mjs && git add media/screenshot-*.png"
+    },
+    "devDependencies": {
+        "marked": "^15.0.0",
+        "puppeteer": "^24.0.0"
+    },
     "main": "./extension.js",
     "contributes": {
         "commands": [
             {
-                "command": "glimpse.openPreview",
-                "title": "Glimpse: Open Markdown Preview"
+                "command": "rime.openPreview",
+                "title": "Rime: Open Markdown Preview"
             }
         ],
         "keybindings": [
             {
-                "command": "glimpse.openPreview",
+                "command": "rime.openPreview",
                 "key": "ctrl+shift+m",
                 "mac": "cmd+shift+m",
                 "when": "editorLangId == markdown"

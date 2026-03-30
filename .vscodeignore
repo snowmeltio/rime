@@ -2,3 +2,7 @@
 .gitignore
 .vscode/**
 *.vsix
+CLAUDE.md
+scripts/**
+media/sample.md
+node_modules/**

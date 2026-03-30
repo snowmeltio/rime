@@ -41,7 +41,7 @@ function activate(context) {
 
     // Manual command
     context.subscriptions.push(
-        vscode.commands.registerCommand('glimpse.openPreview', async () => {
+        vscode.commands.registerCommand('rime.openPreview', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showWarningMessage('Open a markdown file first.');
