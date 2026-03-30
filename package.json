@@ -1,0 +1,48 @@
+{
+    "name": "glimpse",
+    "displayName": "Glimpse",
+    "description": "Auto-opens markdown preview when you open a markdown file. Clean reading view with bundled stylesheet.",
+    "version": "1.0.0",
+    "publisher": "snowmelt",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/snowmeltio/glimpse"
+    },
+    "icon": "media/icon.png",
+    "engines": {
+        "vscode": "^1.77.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "keywords": [
+        "markdown",
+        "preview",
+        "auto-preview",
+        "reading"
+    ],
+    "activationEvents": [
+        "onLanguage:markdown"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "glimpse.openPreview",
+                "title": "Glimpse: Open Markdown Preview"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "glimpse.openPreview",
+                "key": "ctrl+shift+m",
+                "mac": "cmd+shift+m",
+                "when": "editorLangId == markdown"
+            }
+        ],
+        "markdown.previewStyles": [
+            "./styles/preview.css"
+        ]
+    }
+}

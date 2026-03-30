@@ -1,0 +1,130 @@
+/* Glimpse -- clean reading typography for markdown preview */
+
+body {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 15px;
+    line-height: 1.6;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 3rem;
+    color: #1a1a1a;
+}
+
+/* Headings -- sans-serif for contrast against serif body */
+h1, h2, h3, h4, h5, h6 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 600;
+    line-height: 1.3;
+    margin-top: 2em;
+    margin-bottom: 0.4em;
+    color: #111;
+}
+
+h1 {
+    font-size: 1.75em;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 0.3em;
+    margin-top: 1em;
+}
+
+h2 { font-size: 1.35em; }
+h3 { font-size: 1.1em; }
+h4 { font-size: 1em; color: #444; }
+
+p { margin: 0.75em 0; }
+
+a { color: #0055cc; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Tables -- key for consulting docs */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.25em 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.88em;
+}
+
+th {
+    background: #f2f2f2;
+    font-weight: 600;
+    text-align: left;
+    padding: 0.6em 0.9em;
+    border: 1px solid #d0d0d0;
+}
+
+td {
+    padding: 0.5em 0.9em;
+    border: 1px solid #d8d8d8;
+    vertical-align: top;
+}
+
+tr:nth-child(even) td { background: #fafafa; }
+
+/* Code */
+code {
+    font-family: 'SF Mono', Menlo, 'Courier New', monospace;
+    font-size: 0.85em;
+    background: #f0f0f0;
+    padding: 0.15em 0.4em;
+    border-radius: 3px;
+    color: #333;
+}
+
+pre {
+    background: #f5f5f5;
+    padding: 1em 1.2em;
+    border-radius: 5px;
+    overflow-x: auto;
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+
+pre code {
+    background: none;
+    padding: 0;
+    font-size: 1em;
+}
+
+/* Lists */
+ul, ol { padding-left: 1.6em; }
+li { margin: 0.3em 0; }
+li > ul, li > ol { margin: 0.2em 0; }
+
+/* Blockquote */
+blockquote {
+    border-left: 3px solid #ccc;
+    margin: 1em 0;
+    padding: 0.4em 1em;
+    color: #555;
+    font-style: italic;
+}
+
+/* Horizontal rule */
+hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin: 1em 0;
+}
+
+/* Checkboxes (task lists) */
+input[type="checkbox"] { margin-right: 0.4em; }
+
+/* Images */
+img { max-width: 100%; border-radius: 3px; }
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+    body { color: #ddd; background: transparent; }
+    h1, h2, h3, h4, h5, h6 { color: #eee; }
+    h1 { border-bottom-color: #444; }
+    h4 { color: #aaa; }
+    a { color: #6699dd; }
+    th { background: #2a2a2a; border-color: #444; color: #ddd; }
+    td { border-color: #3a3a3a; }
+    tr:nth-child(even) td { background: #1e1e1e; }
+    code { background: #2a2a2a; color: #ccc; }
+    pre { background: #252525; }
+    blockquote { border-left-color: #555; color: #999; }
+    hr { border-top-color: #444; }
+}
