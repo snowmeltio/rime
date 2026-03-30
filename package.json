@@ -2,7 +2,7 @@
     "name": "rime",
     "displayName": "Rime",
     "description": "Auto-opens markdown preview when you open a markdown file. Clean reading view with bundled stylesheet.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "publisher": "snowmeltio",
     "license": "SEE LICENSE IN LICENSE.md",
     "repository": {
