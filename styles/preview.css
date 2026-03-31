@@ -113,18 +113,23 @@ input[type="checkbox"] { margin-right: 0.4em; }
 /* Images */
 img { max-width: 100%; border-radius: 3px; }
 
-/* Dark mode */
-@media (prefers-color-scheme: dark) {
-    body { color: #ddd; background: transparent; }
-    h1, h2, h3, h4, h5, h6 { color: #eee; }
-    h1 { border-bottom-color: #444; }
-    h4 { color: #aaa; }
-    a { color: #6699dd; }
-    th { background: #2a2a2a; border-color: #444; color: #ddd; }
-    td { border-color: #3a3a3a; }
-    tr:nth-child(even) td { background: #1e1e1e; }
-    code { background: #2a2a2a; color: #ccc; }
-    pre { background: #252525; }
-    blockquote { border-left-color: #555; color: #999; }
-    hr { border-top-color: #444; }
+/* Dark mode -- scoped to VS Code's theme class, not OS preference */
+body.vscode-dark, body.vscode-high-contrast {
+    color: #ddd; background: transparent;
 }
+body.vscode-dark h1, body.vscode-dark h2, body.vscode-dark h3,
+body.vscode-dark h4, body.vscode-dark h5, body.vscode-dark h6,
+body.vscode-high-contrast h1, body.vscode-high-contrast h2, body.vscode-high-contrast h3,
+body.vscode-high-contrast h4, body.vscode-high-contrast h5, body.vscode-high-contrast h6 {
+    color: #eee;
+}
+body.vscode-dark h1, body.vscode-high-contrast h1 { border-bottom-color: #444; }
+body.vscode-dark h4, body.vscode-high-contrast h4 { color: #aaa; }
+body.vscode-dark a, body.vscode-high-contrast a { color: #6699dd; }
+body.vscode-dark th, body.vscode-high-contrast th { background: #2a2a2a; border-color: #444; color: #ddd; }
+body.vscode-dark td, body.vscode-high-contrast td { border-color: #3a3a3a; }
+body.vscode-dark tr:nth-child(even) td, body.vscode-high-contrast tr:nth-child(even) td { background: #1e1e1e; }
+body.vscode-dark code, body.vscode-high-contrast code { background: #2a2a2a; color: #ccc; }
+body.vscode-dark pre, body.vscode-high-contrast pre { background: #252525; }
+body.vscode-dark blockquote, body.vscode-high-contrast blockquote { border-left-color: #555; color: #999; }
+body.vscode-dark hr, body.vscode-high-contrast hr { border-top-color: #444; }
