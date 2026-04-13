@@ -3,6 +3,8 @@
 .vscode/**
 *.vsix
 CLAUDE.md
+.claude/**
+.locks/**
 scripts/**
 media/sample.md
 node_modules/**

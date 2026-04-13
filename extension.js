@@ -83,9 +83,9 @@ function activate(context) {
             // Small delay to let the editor settle
             await new Promise(r => setTimeout(r, 150));
 
-            // Verify the editor is still active
-            if (vscode.window.activeTextEditor !== editor) return;
-
+            // Refocus the source editor so the preview opens in its column,
+            // not whichever webview/panel happens to hold focus right now.
+            await vscode.window.showTextDocument(doc, editor.viewColumn, false);
             await vscode.commands.executeCommand('markdown.showPreview', doc.uri);
         })
     );
@@ -106,6 +106,7 @@ function activate(context) {
                 vscode.window.showWarningMessage('Markdown preview is not supported for remote files.');
                 return;
             }
+            await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
             await vscode.commands.executeCommand('markdown.showPreview', editor.document.uri);
         })
     );

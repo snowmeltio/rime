@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- Refocus source editor before opening preview, so the preview lands in the source column instead of whichever webview (e.g. Claude Code) currently holds focus.
+
 ## 1.0.0
 
 - Auto-opens markdown preview when a markdown file is opened.
