@@ -83,10 +83,24 @@ function activate(context) {
             // Small delay to let the editor settle
             await new Promise(r => setTimeout(r, 150));
 
+            // Re-resolve the editor: the one we captured 150ms ago may have
+            // closed, moved column, or been superseded. Using the live one
+            // avoids opening the preview against stale viewColumn state.
+            const live = vscode.window.visibleTextEditors.find(
+                e => e.document.uri.toString() === key
+            );
+            if (!live) return;
+
+            // Bail if the user moved focus to a different document during the
+            // delay. Without this, we'd yank focus back to a file the user has
+            // already navigated away from.
+            const active = vscode.window.activeTextEditor;
+            if (active && active.document.uri.toString() !== key) return;
+
             // Refocus the source editor so the preview opens in its column,
             // not whichever webview/panel happens to hold focus right now.
-            await vscode.window.showTextDocument(doc, editor.viewColumn, false);
-            await vscode.commands.executeCommand('markdown.showPreview', doc.uri);
+            await vscode.window.showTextDocument(live.document, live.viewColumn, false);
+            await vscode.commands.executeCommand('markdown.showPreview', live.document.uri);
         })
     );
 

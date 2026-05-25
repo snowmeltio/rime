@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.3
+
+- Fix flaky auto-preview introduced in 1.1.2. The unconditional `showTextDocument` refocus call was stealing focus back to the markdown source even when the user had navigated away during the 150 ms settle delay, and it operated on a possibly-stale `viewColumn` captured before the delay. The refocus now (a) re-resolves the live editor by URI, (b) bails if the active editor has moved to a different document, and (c) uses the live `viewColumn`. The Claude-Code-panel hijacking fix from 1.1.2 is preserved.
+
 ## 1.1.2
 
 - Refocus source editor before opening preview, so the preview lands in the source column instead of whichever webview (e.g. Claude Code) currently holds focus.
