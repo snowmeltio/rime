@@ -53,13 +53,63 @@ function activate(context) {
     // onDidChangeActiveTextEditor that our own showTextDocument re-fires for the
     // same file; activations for any other file fall through and supersede it.
     let revealingKey = null;
-    // URI backing the preview Rime last foregrounded. The disk-change watcher
-    // refreshes only this file, so unrelated *.md writes (e.g. agent scratch or
-    // state files) don't flicker whatever you're reading.
-    let lastPreviewKey = null;
+    // Pending "clear revealingKey" timers, keyed by URI, so a rapid re-reveal of
+    // the same file cancels the prior reveal's trailing clear instead of letting
+    // it null revealingKey while the re-reveal is mid-flight.
+    const clearTimers = new Map();
     // Per-file settle timers: a burst of activations on one file collapses into
     // one reveal, and switching files leaves the stale reveal to bail.
     const settleTimers = new Map();
+
+    // Keep the preview in sync when the underlying file changes on disk. VS
+    // Code's built-in preview is meant to live-update, but it's unreliable when
+    // a file is overwritten externally (microsoft/vscode#13280, #265277) — e.g.
+    // a tool rewriting the .md you're reading. We watch ONLY the file currently
+    // in the preview — any extension, including sniffed extensionless files — so
+    // unrelated writes elsewhere never flicker it. markdown.preview.refresh takes
+    // no URI and refreshes the visible preview, which is fine here because the
+    // watched file is the one on screen.
+    let previewWatcher = null;
+    let watchedKey = null;
+    let refreshTimer = null;
+    const watchPreviewFile = (uri) => {
+        if (uri.scheme !== 'file') return; // disk-watching only applies to files
+        const key = uri.toString();
+        if (key === watchedKey) return; // already watching this file
+        if (previewWatcher) previewWatcher.dispose();
+        clearTimeout(refreshTimer); // drop any pending refresh for the old file
+        watchedKey = key;
+        // Watch the containing directory and match the exact file by URI in the
+        // handler, rather than using the basename as a RelativePattern glob:
+        // filenames with glob metacharacters ([ ] * ? { }) would otherwise be
+        // misread — never matching, or over-matching siblings.
+        previewWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(vscode.Uri.file(path.dirname(uri.fsPath)), '*')
+        );
+        const refresh = (changed) => {
+            if (changed.toString() !== key) return; // ignore sibling files
+            clearTimeout(refreshTimer);
+            // Debounce: collapse a burst of writes (e.g. streamed output) into
+            // one refresh, and give VS Code time to reload the document model
+            // from disk first so the refresh renders fresh text.
+            refreshTimer = setTimeout(() => {
+                // Skip while the buffer is dirty: the preview renders the unsaved
+                // in-memory model, not disk, so a refresh would show stale text
+                // and mask the conflict.
+                const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === key);
+                if (doc && doc.isDirty) return;
+                vscode.commands.executeCommand('markdown.preview.refresh');
+            }, 250);
+        };
+        previewWatcher.onDidChange(refresh);
+        previewWatcher.onDidCreate(refresh);
+    };
+    context.subscriptions.push({
+        dispose: () => {
+            if (previewWatcher) previewWatcher.dispose();
+            clearTimeout(refreshTimer);
+        }
+    });
 
     // Foreground the preview for a freshly activated markdown editor. Runs on
     // every activation (not once per session), so re-clicking a markdown file
@@ -89,13 +139,17 @@ function activate(context) {
             .getConfiguration('rime')
             .get('focusBehaviour', 'preview');
 
+        // A re-reveal of this file supersedes the prior reveal's trailing clear,
+        // so it can't null revealingKey while we're mid-flight.
+        clearTimeout(clearTimers.get(key));
+        clearTimers.delete(key);
         revealingKey = key;
         try {
             // Refocus the source editor so the preview opens in its column,
             // not whichever webview/panel happens to hold focus right now.
             await vscode.window.showTextDocument(live.document, live.viewColumn, false);
             await vscode.commands.executeCommand('markdown.showPreview', live.document.uri);
-            lastPreviewKey = key;
+            watchPreviewFile(live.document.uri);
 
             // markdown.showPreview has no preserveFocus option — it always pulls
             // focus into the preview webview. Hand focus back per the setting so
@@ -114,8 +168,12 @@ function activate(context) {
             // Clear on a trailing tick, not synchronously: the activation event
             // our showTextDocument triggers is delivered asynchronously, often
             // after this block resolves. Clearing late keeps that self-induced
-            // same-key event swallowed by the guard in the listener.
-            setTimeout(() => { if (revealingKey === key) revealingKey = null; }, 50);
+            // same-key event swallowed by the guard in the listener. Tracked in
+            // clearTimers so a rapid re-reveal of this file can cancel it.
+            clearTimers.set(key, setTimeout(() => {
+                clearTimers.delete(key);
+                if (revealingKey === key) revealingKey = null;
+            }, 50));
         }
     }
 
@@ -160,34 +218,6 @@ function activate(context) {
         })
     );
 
-    // Keep the preview in sync when the underlying file changes on disk. VS
-    // Code's built-in preview is meant to live-update, but it's unreliable when
-    // a file is overwritten externally (microsoft/vscode#13280, #265277) — e.g.
-    // a tool rewriting the .md you're reading. markdown.preview.refresh takes no
-    // URI (it refreshes the visible preview), so we only fire it for the file we
-    // last previewed, and skip it while the buffer is dirty (the preview renders
-    // the unsaved in-memory model, not disk, so refreshing would show stale text
-    // and mask the conflict).
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.md');
-    const refreshTimers = new Map();
-    const scheduleRefresh = (uri) => {
-        const k = uri.toString();
-        if (k !== lastPreviewKey) return;
-        clearTimeout(refreshTimers.get(k));
-        // Debounce: collapse a burst of writes (e.g. streamed output) into one
-        // refresh, and give VS Code time to reload the document model from disk
-        // first so the refresh renders fresh text.
-        refreshTimers.set(k, setTimeout(() => {
-            refreshTimers.delete(k);
-            const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === k);
-            if (doc && doc.isDirty) return;
-            vscode.commands.executeCommand('markdown.preview.refresh');
-        }, 250));
-    };
-    watcher.onDidChange(scheduleRefresh);
-    watcher.onDidCreate(scheduleRefresh);
-    context.subscriptions.push(watcher);
-
     // Manual command
     context.subscriptions.push(
         vscode.commands.registerCommand('rime.openPreview', async () => {
@@ -206,7 +236,7 @@ function activate(context) {
             }
             await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
             await vscode.commands.executeCommand('markdown.showPreview', editor.document.uri);
-            lastPreviewKey = editor.document.uri.toString();
+            watchPreviewFile(editor.document.uri);
         })
     );
 }
