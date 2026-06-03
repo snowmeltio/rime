@@ -5,6 +5,7 @@
 CLAUDE.md
 .claude/**
 .locks/**
+.serac/**
 scripts/**
 media/sample.md
 node_modules/**
