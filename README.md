@@ -11,8 +11,9 @@ Rime opens VS Code's built-in markdown preview whenever you open a `.md` file, a
 - **Auto-preview** — open a `.md` file, get the rendered preview immediately.
 - **Reading stylesheet** — serif body text, sans-serif headings, proper tables, dark mode support. Designed for documents, not READMEs.
 - **Smart skip** — won't trigger in git diffs, PR reviews, or merge conflicts.
-- **Session aware** — each file is previewed once per session. Switching tabs won't re-trigger.
+- **Edit-friendly** — the preview comes forward when you open or switch to a markdown file, but won't grab focus back when you click into the source to edit, whether the preview sits beside the editor or stacked in the same pane.
 - **Manual command** — `Cmd+Shift+M` (Mac) / `Ctrl+Shift+M` (Windows/Linux) to open preview on demand.
+- **Configurable focus** — set `rime.focusBehaviour` to choose where focus lands after the preview opens: `preview` (default), `source`, or `preserve`.
 
 ## Requirements
 

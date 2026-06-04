@@ -46,6 +46,49 @@ function isDiffEditor(editor) {
     return false;
 }
 
+// True when `tab` is the built-in markdown preview for the file `basename`.
+// The preview is a webview tab whose viewType is "markdown.preview" (surfaced
+// through the Tab API as "mainThreadWebview-markdown.preview") and whose label
+// is "Preview <filename>". We match on either signal plus the basename, so
+// another file's preview is never mistaken for this one.
+function isPreviewTabFor(tab, basename) {
+    if (!tab || !(tab.input instanceof vscode.TabInputWebview)) return false;
+    const label = tab.label || '';
+    const isMarkdownPreview =
+        (tab.input.viewType || '').includes('markdown') || /preview/i.test(label);
+    return isMarkdownPreview && label.includes(basename);
+}
+
+// Decide whether to suppress the auto-reveal for a just-activated markdown
+// source editor. We skip only when foregrounding the preview would steal focus
+// the user plainly didn't want:
+//   - the preview shares a group with the source they just activated: a
+//     single-pane tab flip TO the source (they chose the source), or
+//   - the preview is the active (visible) tab of another group: already on
+//     screen beside the source.
+// We do NOT skip when the only preview is backgrounded in a DIFFERENT group:
+// foregrounding it there usefully brings it back alongside (the v1.2.0
+// re-click behaviour). With no preview open we also don't skip, so the first
+// activation opens one. This holds even if the Tab API reports the pre-click
+// active tab: in the same-pane case the preview is then still `isActive`, so
+// the second clause catches what the first would have.
+function shouldSkipReveal(uri) {
+    const key = uri.toString();
+    const basename = path.basename(uri.fsPath || uri.path);
+    for (const group of vscode.window.tabGroups.all) {
+        const sourceActiveHere =
+            group.activeTab &&
+            group.activeTab.input instanceof vscode.TabInputText &&
+            group.activeTab.input.uri.toString() === key;
+        for (const tab of group.tabs) {
+            if (isPreviewTabFor(tab, basename) && (sourceActiveHere || tab.isActive)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 function activate(context) {
     // Track documents already checked for markdown sniffing to avoid re-checking
     const sniffed = new Set();
@@ -205,6 +248,19 @@ function activate(context) {
             if (SKIP_SCHEMES.has(doc.uri.scheme)) return;
 
             const key = doc.uri.toString();
+
+            // Suppress the reveal when foregrounding the preview would only
+            // steal focus the user didn't want: they flipped to the source tab
+            // in a shared pane, or the preview is already visible beside it.
+            // See shouldSkipReveal for the full rule. The manual command
+            // (Cmd+Shift+M) is unaffected and still foregrounds on demand.
+            if (shouldSkipReveal(doc.uri)) {
+                // Cancel any reveal still pending for this file so a stale
+                // settle timer can't fire after we've decided it's already up.
+                clearTimeout(settleTimers.get(key));
+                settleTimers.delete(key);
+                return;
+            }
 
             // Settle delay before revealing, debounced per file: a burst of
             // activations on one file collapses to a single reveal, and
