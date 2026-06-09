@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3
+
+- Keep markdown out of the Claude Code chat pane. When you click a `.md` link inside the chat, VS Code opens the source into the chat's own editor group, and the preview followed it there — burying the chat. Rime now detects when the source has landed in the chat group (any non-preview webview editor) and moves it into the other editor group, the "secondary pane", before opening the preview, so both sit beside the chat instead of on top of it. With no chat webview open, behaviour is unchanged (the preview opens in the source's own column).
+
 ## 1.2.2
 
 - Don't pull focus back to the preview when you switch to the markdown source to edit it. The preview still foregrounds when you open or activate a markdown file, but if its preview is already visible beside the editor — or stacked as a tab in the same pane — clicking into the source now leaves focus there. A preview that's been closed or backgrounded in another group is still brought forward, and `Cmd+Shift+M` foregrounds on demand.

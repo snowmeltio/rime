@@ -46,17 +46,37 @@ function isDiffEditor(editor) {
     return false;
 }
 
-// True when `tab` is the built-in markdown preview for the file `basename`.
-// The preview is a webview tab whose viewType is "markdown.preview" (surfaced
-// through the Tab API as "mainThreadWebview-markdown.preview") and whose label
-// is "Preview <filename>". We match on either signal plus the basename, so
-// another file's preview is never mistaken for this one.
-function isPreviewTabFor(tab, basename) {
+// True when `tab` is a built-in markdown preview webview (for any file). The
+// preview is surfaced through the Tab API as a webview whose viewType is
+// "mainThreadWebview-markdown.preview" and whose label is "Preview <filename>".
+function isAnyPreviewTab(tab) {
     if (!tab || !(tab.input instanceof vscode.TabInputWebview)) return false;
     const label = tab.label || '';
-    const isMarkdownPreview =
-        (tab.input.viewType || '').includes('markdown') || /preview/i.test(label);
-    return isMarkdownPreview && label.includes(basename);
+    return (tab.input.viewType || '').includes('markdown') || /preview/i.test(label);
+}
+
+// True when `tab` is the markdown preview for the file `basename` specifically,
+// so another file's preview is never mistaken for this one.
+function isPreviewTabFor(tab, basename) {
+    return isAnyPreviewTab(tab) && (tab.label || '').includes(basename);
+}
+
+// The editor group hosting a non-preview webview — in practice the Claude Code
+// chat (or any other webview-based editor). We match "a webview that isn't a
+// markdown preview" rather than the chat's specific viewType, so this keeps
+// working if Anthropic ever renames that view. Groups iterate left-to-right, so
+// the leftmost such group wins, matching the common chat-on-the-left layout.
+// Returns null when no foreign webview is open (e.g. the chat is closed), in
+// which case markdown routing falls back to wherever the source already is.
+function foreignWebviewGroup() {
+    for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+            if (tab.input instanceof vscode.TabInputWebview && !isAnyPreviewTab(tab)) {
+                return group;
+            }
+        }
+    }
+    return null;
 }
 
 // Decide whether to suppress the auto-reveal for a just-activated markdown
@@ -72,7 +92,15 @@ function isPreviewTabFor(tab, basename) {
 // activation opens one. This holds even if the Tab API reports the pre-click
 // active tab: in the same-pane case the preview is then still `isActive`, so
 // the second clause catches what the first would have.
-function shouldSkipReveal(uri) {
+//
+// One override (v1.2.3): never skip when the source itself sits in the chat's
+// editor group. VS Code routes .md links clicked in the chat into that group,
+// and we always want to evacuate the source out of it — even if its preview is
+// already visible in the secondary pane (where showPreviewInSecondaryPane will
+// reveal it after the move).
+function shouldSkipReveal(uri, sourceColumn) {
+    const chat = foreignWebviewGroup();
+    if (chat && chat.viewColumn === sourceColumn) return false;
     const key = uri.toString();
     const basename = path.basename(uri.fsPath || uri.path);
     for (const group of vscode.window.tabGroups.all) {
@@ -154,6 +182,37 @@ function activate(context) {
         }
     });
 
+    // Foreground the markdown preview, keeping both the source and the preview
+    // out of the chat's editor group. When you click a .md link inside the chat,
+    // VS Code routes the source into the chat group (the active group); left
+    // alone, markdown.showPreview then opens the preview there too, burying the
+    // chat. So when the source has landed in the chat group, we move it into the
+    // other editor group — the "secondary pane" — first, then preview beside it.
+    // With no chat webview open, foreignWebviewGroup() is null and we just
+    // preview in the source's own column (the prior behaviour). Returns the
+    // column the markdown now occupies, for the caller's focus handling.
+    async function showPreviewInSecondaryPane(document, sourceColumn) {
+        const chat = foreignWebviewGroup();
+        const other = chat && chat.viewColumn === sourceColumn
+            ? vscode.window.tabGroups.all.find(g => g.viewColumn !== chat.viewColumn)
+            : null;
+        // Focus the source so the move/preview act on it, not whichever
+        // webview/panel currently holds focus.
+        await vscode.window.showTextDocument(document, sourceColumn, false);
+        if (other) {
+            // Shift the now-active source out of the chat group toward the
+            // secondary pane; the preview then opens in that group.
+            await vscode.commands.executeCommand(
+                other.viewColumn > sourceColumn
+                    ? 'workbench.action.moveEditorToRightGroup'
+                    : 'workbench.action.moveEditorToLeftGroup'
+            );
+        }
+        await vscode.commands.executeCommand('markdown.showPreview', document.uri);
+        watchPreviewFile(document.uri);
+        return other ? other.viewColumn : sourceColumn;
+    }
+
     // Foreground the preview for a freshly activated markdown editor. Runs on
     // every activation (not once per session), so re-clicking a markdown file
     // always brings its preview to the front — treating the click as a
@@ -188,18 +247,18 @@ function activate(context) {
         clearTimers.delete(key);
         revealingKey = key;
         try {
-            // Refocus the source editor so the preview opens in its column,
-            // not whichever webview/panel happens to hold focus right now.
-            await vscode.window.showTextDocument(live.document, live.viewColumn, false);
-            await vscode.commands.executeCommand('markdown.showPreview', live.document.uri);
-            watchPreviewFile(live.document.uri);
+            // Foreground the preview in the secondary pane (never the chat
+            // group). Returns the column the markdown now occupies, which may
+            // differ from live.viewColumn if the source was moved out of the
+            // chat group.
+            const column = await showPreviewInSecondaryPane(live.document, live.viewColumn);
 
             // markdown.showPreview has no preserveFocus option — it always pulls
             // focus into the preview webview. Hand focus back per the setting so
             // the preview foregrounds without trapping the user in it.
             if (behaviour === 'source') {
-                // Reliable: return focus to the source editor.
-                await vscode.window.showTextDocument(live.document, live.viewColumn, false);
+                // Reliable: return focus to the source editor in its column.
+                await vscode.window.showTextDocument(live.document, column, false);
             } else if (behaviour === 'preserve') {
                 // Best-effort: bounce focus back toward the group it came from
                 // (e.g. an agent chat in an adjacent editor column). VS Code has
@@ -254,7 +313,7 @@ function activate(context) {
             // in a shared pane, or the preview is already visible beside it.
             // See shouldSkipReveal for the full rule. The manual command
             // (Cmd+Shift+M) is unaffected and still foregrounds on demand.
-            if (shouldSkipReveal(doc.uri)) {
+            if (shouldSkipReveal(doc.uri, editor.viewColumn)) {
                 // Cancel any reveal still pending for this file so a stale
                 // settle timer can't fire after we've decided it's already up.
                 clearTimeout(settleTimers.get(key));
@@ -290,9 +349,7 @@ function activate(context) {
                 vscode.window.showWarningMessage('Markdown preview is not supported for remote files.');
                 return;
             }
-            await vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
-            await vscode.commands.executeCommand('markdown.showPreview', editor.document.uri);
-            watchPreviewFile(editor.document.uri);
+            await showPreviewInSecondaryPane(editor.document, editor.viewColumn);
         })
     );
 }
