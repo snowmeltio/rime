@@ -61,6 +61,27 @@ function isPreviewTabFor(tab, basename) {
     return isAnyPreviewTab(tab) && (tab.label || '').includes(basename);
 }
 
+// True when every tab in `group` is markdown-related -- a preview (for any
+// file) or another markdown source -- or the group is empty. Safe to
+// relocate the source+preview into without burying someone else's real
+// content, e.g. the user's active code file. This is the check v1.2.3's
+// group selection was missing (it took "the first non-chat group"
+// unconditionally, whatever that group held), which is what let a preview
+// land on top of active code. Checking *every* tab, not just the active one,
+// also leaves alone a group with a backgrounded code tab even though nothing
+// of it is visible right now. Deliberately not scoped to *this* file's own
+// preview: any established markdown pane (this file's or another's) is fair
+// game to reuse, otherwise a second, different markdown file opened from the
+// chat would find its own prior pane "unsafe" (it holds this file's source
+// tab, not a preview tab) and have nowhere safe to go.
+function isSafeTarget(group) {
+    return group.tabs.every(tab =>
+        isAnyPreviewTab(tab) ||
+        (tab.input instanceof vscode.TabInputText &&
+            ['.md', '.markdown'].includes(
+                path.extname(tab.input.uri.fsPath || tab.input.uri.path).toLowerCase())));
+}
+
 // The editor group hosting a non-preview webview — in practice the Claude Code
 // chat (or any other webview-based editor). We match "a webview that isn't a
 // markdown preview" rather than the chat's specific viewType, so this keeps
@@ -186,31 +207,64 @@ function activate(context) {
     // out of the chat's editor group. When you click a .md link inside the chat,
     // VS Code routes the source into the chat group (the active group); left
     // alone, markdown.showPreview then opens the preview there too, burying the
-    // chat. So when the source has landed in the chat group, we move it into the
-    // other editor group — the "secondary pane" — first, then preview beside it.
+    // chat. So when the source has landed in the chat group, we relocate it to
+    // another editor group first, then preview beside it.
+    //
+    // Target selection only ever considers groups that are safe to land in:
+    // empty, or already all markdown content (isSafeTarget) — never a group
+    // that's showing someone's real, visible code. When no existing group
+    // qualifies, we open a brand-new column instead of falling back to "the
+    // first non-chat group" (the v1.2.3 bug) or leaving the source stuck in
+    // the chat group (a silent regression to the pre-v1.2.3 bug, and exactly
+    // the common two-pane chat+code case from the bug report, where the only
+    // other group is always the code group). VS Code creates editor groups on
+    // demand up to the requested column (columnToEditorGroup in VS Code's own
+    // source), so targeting one past the highest existing column always
+    // yields a fresh, empty group — never an occupied one.
+    //
+    // The relocation itself opens the document directly in the target group's
+    // exact viewColumn and closes the leftover tab in the chat group, rather
+    // than delegating to workbench.action.moveEditorTo{Right,Left}Group. Those
+    // commands re-resolve their own destination via VS Code's live grid
+    // geometry relative to the source group — independent of the target we
+    // just verified is safe — and, when moving into an *existing* adjacent
+    // group, join whatever is already there rather than creating a new one.
+    // In any layout with 3+ groups or vertical splits that resolution can
+    // diverge from our target entirely, which is how a verified-safe decision
+    // could still end up landing on top of real code.
+    //
     // With no chat webview open, foreignWebviewGroup() is null and we just
     // preview in the source's own column (the prior behaviour). Returns the
     // column the markdown now occupies, for the caller's focus handling.
     async function showPreviewInSecondaryPane(document, sourceColumn) {
         const chat = foreignWebviewGroup();
-        const other = chat && chat.viewColumn === sourceColumn
-            ? vscode.window.tabGroups.all.find(g => g.viewColumn !== chat.viewColumn)
+        const needsEvacuation = !!(chat && chat.viewColumn === sourceColumn);
+        let target = needsEvacuation
+            ? vscode.window.tabGroups.all.find(g => g.viewColumn !== chat.viewColumn && isSafeTarget(g))
             : null;
-        // Focus the source so the move/preview act on it, not whichever
+        if (needsEvacuation && !target) {
+            const maxColumn = Math.max(...vscode.window.tabGroups.all.map(g => g.viewColumn));
+            target = { viewColumn: maxColumn + 1 };
+        }
+        // Captured before we touch anything, so we can evacuate the chat group
+        // afterwards: showTextDocument into a different column opens a new tab
+        // there, it doesn't move the existing one, so the old tab needs an
+        // explicit close.
+        const sourceTab = target && chat.tabs.find(t =>
+            t.input instanceof vscode.TabInputText &&
+            t.input.uri.toString() === document.uri.toString());
+
+        // Focus the source so the relocation/preview act on it, not whichever
         // webview/panel currently holds focus.
         await vscode.window.showTextDocument(document, sourceColumn, false);
-        if (other) {
-            // Shift the now-active source out of the chat group toward the
-            // secondary pane; the preview then opens in that group.
-            await vscode.commands.executeCommand(
-                other.viewColumn > sourceColumn
-                    ? 'workbench.action.moveEditorToRightGroup'
-                    : 'workbench.action.moveEditorToLeftGroup'
-            );
+        if (target) {
+            await vscode.window.showTextDocument(document, target.viewColumn, false);
+            if (sourceTab) await vscode.window.tabGroups.close(sourceTab);
         }
+
         await vscode.commands.executeCommand('markdown.showPreview', document.uri);
         watchPreviewFile(document.uri);
-        return other ? other.viewColumn : sourceColumn;
+        return target ? target.viewColumn : sourceColumn;
     }
 
     // Foreground the preview for a freshly activated markdown editor. Runs on

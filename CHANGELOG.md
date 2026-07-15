@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.4
+
+- Fix the preview landing on top of active code in windows with 3+ editor groups. v1.2.3's chat-routing picked "the first non-chat editor group" as the safe secondary pane with no check on what it actually held — in a layout with more than one other pane, that could be the code file you were working in, and the preview (or the source moved ahead of it) would open right over it. Target selection is now content-aware: it only lands in a group that's empty or already all markdown (`isSafeTarget`), and opens a fresh column when no existing group qualifies, rather than barging into occupied code or falling back to burying the chat again. Relocation now opens the document directly at the verified-safe column and closes the leftover chat-group tab, instead of delegating to `workbench.action.moveEditorTo{Right,Left}Group`, whose own grid-relative destination resolution could diverge from the group Rime had already checked was safe.
+
 ## 1.2.3
 
 - Keep markdown out of the Claude Code chat pane. When you click a `.md` link inside the chat, VS Code opens the source into the chat's own editor group, and the preview followed it there — burying the chat. Rime now detects when the source has landed in the chat group (any non-preview webview editor) and moves it into the other editor group, the "secondary pane", before opening the preview, so both sit beside the chat instead of on top of it. With no chat webview open, behaviour is unchanged (the preview opens in the source's own column).
