@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.5
+
+- Fix `isPreviewTabFor` mistaking one file's preview for another's when one basename is a substring of the other (e.g. a `shared-notes.md` preview was matched as `notes.md`'s own). The basename match is now anchored to a word/path boundary at the end of the tab label instead of a plain substring test. Added a starter unit test suite (`test/extension.test.js`, via Node's built-in test runner) covering the pure predicate/routing-decision helpers, and a GitHub Actions CI workflow that runs it plus a packaging smoke test on every push/PR.
+
 ## 1.2.4
 
 - Fix the preview landing on top of active code in windows with 3+ editor groups. v1.2.3's chat-routing picked "the first non-chat editor group" as the safe secondary pane with no check on what it actually held — in a layout with more than one other pane, that could be the code file you were working in, and the preview (or the source moved ahead of it) would open right over it. Target selection is now content-aware: it only lands in a group that's empty or already all markdown (`isSafeTarget`), and opens a fresh column when no existing group qualifies, rather than barging into occupied code or falling back to burying the chat again. Relocation now opens the document directly at the verified-safe column and closes the leftover chat-group tab, instead of delegating to `workbench.action.moveEditorTo{Right,Left}Group`, whose own grid-relative destination resolution could diverge from the group Rime had already checked was safe.

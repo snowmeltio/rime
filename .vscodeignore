@@ -9,3 +9,5 @@ CLAUDE.md
 scripts/**
 media/sample.md
 node_modules/**
+test/**
+.github/**

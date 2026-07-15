@@ -56,9 +56,15 @@ function isAnyPreviewTab(tab) {
 }
 
 // True when `tab` is the markdown preview for the file `basename` specifically,
-// so another file's preview is never mistaken for this one.
+// so another file's preview is never mistaken for this one. A plain substring
+// test on the label (`Preview <filename>`) previously matched too eagerly --
+// e.g. basename "notes.md" matched a label for "shared-notes.md" -- so this
+// requires basename to appear at a word/path boundary (preceded by start-of-
+// string or whitespace) rather than mid-filename.
 function isPreviewTabFor(tab, basename) {
-    return isAnyPreviewTab(tab) && (tab.label || '').includes(basename);
+    if (!isAnyPreviewTab(tab)) return false;
+    const escaped = basename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|\\s)${escaped}$`).test(tab.label || '');
 }
 
 // True when every tab in `group` is markdown-related -- a preview (for any
@@ -410,4 +416,17 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+// Everything past deactivate is exported only for test/extension.test.js —
+// VS Code's extension host only ever calls activate/deactivate.
+module.exports = {
+    activate,
+    deactivate,
+    looksLikeMarkdown,
+    hasFileExtension,
+    isDiffEditor,
+    isAnyPreviewTab,
+    isPreviewTabFor,
+    isSafeTarget,
+    foreignWebviewGroup,
+    shouldSkipReveal,
+};
