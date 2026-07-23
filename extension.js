@@ -210,28 +210,34 @@ function activate(context) {
     });
 
     // Foreground the markdown preview, keeping both the source and the preview
-    // out of the chat's editor group. When you click a .md link inside the chat,
-    // VS Code routes the source into the chat group (the active group); left
-    // alone, markdown.showPreview then opens the preview there too, burying the
-    // chat. So when the source has landed in the chat group, we relocate it to
-    // another editor group first, then preview beside it.
+    // out of any group holding real content -- the chat's editor group, or any
+    // other group with non-markdown tabs. Evacuation used to trigger only when
+    // the source landed directly in the chat's own group (the one reliably-
+    // tested path: clicking a .md link inside the chat). Any other way of
+    // opening a markdown file -- Explorer, Quick Open, switching to an
+    // already-open tab -- left the source (and the preview, since
+    // markdown.showPreview always opens in whatever column is currently
+    // active, never "beside") wherever VS Code's own open command happened to
+    // put it, including on top of a group showing real code. Checking the
+    // source's own group against isSafeTarget, rather than special-casing the
+    // chat, catches both: the chat's group always fails isSafeTarget (its own
+    // webview tab isn't markdown), so this subsumes the old chat-specific
+    // check.
     //
     // Target selection only ever considers groups that are safe to land in:
     // empty, or already all markdown content (isSafeTarget) — never a group
     // that's showing someone's real, visible code. When no existing group
     // qualifies, we open a brand-new column instead of falling back to "the
-    // first non-chat group" (the v1.2.3 bug) or leaving the source stuck in
-    // the chat group (a silent regression to the pre-v1.2.3 bug, and exactly
-    // the common two-pane chat+code case from the bug report, where the only
-    // other group is always the code group). VS Code creates editor groups on
-    // demand up to the requested column (columnToEditorGroup in VS Code's own
-    // source), so targeting one past the highest existing column always
-    // yields a fresh, empty group — never an occupied one.
+    // first non-chat group" (the v1.2.3 bug) or leaving the source wherever it
+    // landed (the bug this generalisation fixes). VS Code creates editor
+    // groups on demand up to the requested column (columnToEditorGroup in VS
+    // Code's own source), so targeting one past the highest existing column
+    // always yields a fresh, empty group — never an occupied one.
     //
     // The relocation itself opens the document directly in the target group's
-    // exact viewColumn and closes the leftover tab in the chat group, rather
-    // than delegating to workbench.action.moveEditorTo{Right,Left}Group. Those
-    // commands re-resolve their own destination via VS Code's live grid
+    // exact viewColumn and closes the leftover tab in the source's old group,
+    // rather than delegating to workbench.action.moveEditorTo{Right,Left}Group.
+    // Those commands re-resolve their own destination via VS Code's live grid
     // geometry relative to the source group — independent of the target we
     // just verified is safe — and, when moving into an *existing* adjacent
     // group, join whatever is already there rather than creating a new one.
@@ -239,24 +245,21 @@ function activate(context) {
     // diverge from our target entirely, which is how a verified-safe decision
     // could still end up landing on top of real code.
     //
-    // With no chat webview open, foreignWebviewGroup() is null and we just
-    // preview in the source's own column (the prior behaviour). Returns the
-    // column the markdown now occupies, for the caller's focus handling.
+    // When the source's own group is already safe, target stays null and we
+    // just preview in place. Returns the column the markdown now occupies,
+    // for the caller's focus handling.
     async function showPreviewInSecondaryPane(document, sourceColumn) {
-        const chat = foreignWebviewGroup();
-        const needsEvacuation = !!(chat && chat.viewColumn === sourceColumn);
-        let target = needsEvacuation
-            ? vscode.window.tabGroups.all.find(g => g.viewColumn !== chat.viewColumn && isSafeTarget(g))
-            : null;
-        if (needsEvacuation && !target) {
-            const maxColumn = Math.max(...vscode.window.tabGroups.all.map(g => g.viewColumn));
-            target = { viewColumn: maxColumn + 1 };
-        }
-        // Captured before we touch anything, so we can evacuate the chat group
-        // afterwards: showTextDocument into a different column opens a new tab
-        // there, it doesn't move the existing one, so the old tab needs an
-        // explicit close.
-        const sourceTab = target && chat.tabs.find(t =>
+        const sourceGroup = vscode.window.tabGroups.all.find(g => g.viewColumn === sourceColumn);
+        const target = (sourceGroup && isSafeTarget(sourceGroup))
+            ? null
+            : vscode.window.tabGroups.all.find(g => g.viewColumn !== sourceColumn && isSafeTarget(g))
+                || { viewColumn: Math.max(...vscode.window.tabGroups.all.map(g => g.viewColumn)) + 1 };
+
+        // Captured before we touch anything, so we can evacuate the source's
+        // current group afterwards: showTextDocument into a different column
+        // opens a new tab there, it doesn't move the existing one, so the old
+        // tab needs an explicit close.
+        const sourceTab = target && sourceGroup && sourceGroup.tabs.find(t =>
             t.input instanceof vscode.TabInputText &&
             t.input.uri.toString() === document.uri.toString());
 

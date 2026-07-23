@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.6
+
+- Fix the preview inconsistently landing in the secondary pane. v1.2.3/1.2.4's safe-target routing only ran when the source landed directly in the chat's own editor group — the one path that had actually been clicked through (a `.md` link inside the chat). Any other way of opening a markdown file (Explorer, Quick Open, switching to an already-open tab) skipped that routing entirely, since `markdown.showPreview` always opens the preview in whatever column is currently active (never "beside," that's a different command), so the source — and preview with it — stayed wherever VS Code's own open command happened to land it, including on top of a group showing real code. Evacuation now checks the source's own group against `isSafeTarget` directly, which naturally covers the chat case too (its webview tab always fails the check) as well as landing in any other unsafe group.
+
 ## 1.2.5
 
 - Fix `isPreviewTabFor` mistaking one file's preview for another's when one basename is a substring of the other (e.g. a `shared-notes.md` preview was matched as `notes.md`'s own). The basename match is now anchored to a word/path boundary at the end of the tab label instead of a plain substring test. Added a starter unit test suite (`test/extension.test.js`, via Node's built-in test runner) covering the pure predicate/routing-decision helpers, and a GitHub Actions CI workflow that runs it plus a packaging smoke test on every push/PR.
