@@ -1,5 +1,8 @@
 *.vsix
 node_modules/
 .vscode/
+.claude/
+.serac/
+.locks/
 .DS_Store
 CLAUDE.md
