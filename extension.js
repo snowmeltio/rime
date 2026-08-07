@@ -67,6 +67,27 @@ function isPreviewTabFor(tab, basename) {
     return new RegExp(`(^|\\s)${escaped}$`).test(tab.label || '');
 }
 
+// True when `tab` holds a markdown source document: a text tab whose filename
+// ends .md/.markdown, or -- for sniffed extensionless files, which Rime itself
+// flips to the markdown language -- whose open document reports languageId
+// 'markdown'. The languageId lookup only works while the document is loaded:
+// a tab restored by a window reload but not yet activated has no entry in
+// workspace.textDocuments, so an extensionless file reads as non-markdown
+// until first activated (its group usually stays reusable anyway via its
+// preview tab, see pickTargetGroup). Before v1.2.7 the extension check was
+// the whole test, so a sniffed extensionless file poisoned its own group:
+// isSafeTarget rejected the pane Rime had built, and every reveal fell
+// through to the new-column fallback.
+function isMarkdownSourceTab(tab) {
+    if (!tab || !(tab.input instanceof vscode.TabInputText)) return false;
+    const uri = tab.input.uri;
+    const ext = path.extname(uri.fsPath || uri.path).toLowerCase();
+    if (ext === '.md' || ext === '.markdown') return true;
+    const key = uri.toString();
+    const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === key);
+    return !!doc && doc.languageId === 'markdown';
+}
+
 // True when every tab in `group` is markdown-related -- a preview (for any
 // file) or another markdown source -- or the group is empty. Safe to
 // relocate the source+preview into without burying someone else's real
@@ -81,11 +102,30 @@ function isPreviewTabFor(tab, basename) {
 // chat would find its own prior pane "unsafe" (it holds this file's source
 // tab, not a preview tab) and have nowhere safe to go.
 function isSafeTarget(group) {
-    return group.tabs.every(tab =>
-        isAnyPreviewTab(tab) ||
-        (tab.input instanceof vscode.TabInputText &&
-            ['.md', '.markdown'].includes(
-                path.extname(tab.input.uri.fsPath || tab.input.uri.path).toLowerCase())));
+    return group.tabs.every(tab => isAnyPreviewTab(tab) || isMarkdownSourceTab(tab));
+}
+
+// Choose the group to relocate a markdown source (and its preview) into, in
+// preference order (v1.2.7):
+//   1. a strictly safe group (isSafeTarget: all markdown, or empty) -- never
+//      disturbs anyone's real code;
+//   2. a group already hosting a markdown preview tab, even when mixed with
+//      other content. A pane already showing a preview is the user's de-facto
+//      view pane, and stacking there can't bury code that wasn't already
+//      sharing with a preview. This is what keeps a stray code tab, or a
+//      non-preview webview like a PDF viewer, from disqualifying the
+//      established view pane and forcing a fresh column on every reveal --
+//      previously target selection was binary (strictly safe or brand-new
+//      column), so one foreign tab in the view pane meant pane proliferation.
+//      Known trade-off: a preview tab stranded in the chat's group would make
+//      the chat group eligible here and bury the chat; routing never opens
+//      previews there, so only a pre-v1.2.3 leftover could set that up.
+//   3. null: no group qualifies; the caller opens a brand-new column.
+function pickTargetGroup(groups, sourceColumn) {
+    const others = groups.filter(g => g.viewColumn !== sourceColumn);
+    return others.find(isSafeTarget)
+        || others.find(g => g.tabs.some(isAnyPreviewTab))
+        || null;
 }
 
 // The editor group hosting a non-preview webview — in practice the Claude Code
@@ -145,6 +185,29 @@ function shouldSkipReveal(uri, sourceColumn) {
 }
 
 function activate(context) {
+    // Routing decisions logged to Output panel -> "Rime", so misbehaviour in a
+    // live window is diagnosable from the actual decision trace rather than
+    // re-derived from static reading (which is how v1.2.6 shipped its bugs).
+    const channel = vscode.window.createOutputChannel('Rime');
+    context.subscriptions.push(channel);
+    const describeTab = (tab) => {
+        if (tab.input instanceof vscode.TabInputText) {
+            const name = path.basename(tab.input.uri.fsPath || tab.input.uri.path);
+            return `text:${name}${isMarkdownSourceTab(tab) ? '' : ' (non-md)'}`;
+        }
+        if (tab.input instanceof vscode.TabInputWebview) {
+            return `webview:${tab.input.viewType}${isAnyPreviewTab(tab) ? ' (preview)' : ''} "${tab.label}"`;
+        }
+        return `other:"${tab.label}"`;
+    };
+    const logGroups = () => {
+        for (const group of vscode.window.tabGroups.all) {
+            channel.appendLine(
+                `  col${group.viewColumn} safe=${isSafeTarget(group)}: ` +
+                (group.tabs.map(describeTab).join(', ') || '(empty)'));
+        }
+    };
+
     // Track documents already checked for markdown sniffing to avoid re-checking
     const sniffed = new Set();
     // URI of the reveal currently in flight. Swallows ONLY the
@@ -224,15 +287,13 @@ function activate(context) {
     // webview tab isn't markdown), so this subsumes the old chat-specific
     // check.
     //
-    // Target selection only ever considers groups that are safe to land in:
-    // empty, or already all markdown content (isSafeTarget) — never a group
-    // that's showing someone's real, visible code. When no existing group
-    // qualifies, we open a brand-new column instead of falling back to "the
-    // first non-chat group" (the v1.2.3 bug) or leaving the source wherever it
-    // landed (the bug this generalisation fixes). VS Code creates editor
-    // groups on demand up to the requested column (columnToEditorGroup in VS
-    // Code's own source), so targeting one past the highest existing column
-    // always yields a fresh, empty group — never an occupied one.
+    // Target selection is three-tier (pickTargetGroup, v1.2.7): a strictly
+    // safe group first, then a group already hosting a markdown preview even
+    // if mixed with other content, and only then a brand-new column. VS Code
+    // creates editor groups on demand up to the requested column
+    // (columnToEditorGroup in VS Code's own source), so targeting one past
+    // the highest existing column always yields a fresh, empty group — never
+    // an occupied one.
     //
     // The relocation itself opens the document directly in the target group's
     // exact viewColumn and closes the leftover tab in the source's old group,
@@ -249,11 +310,24 @@ function activate(context) {
     // just preview in place. Returns the column the markdown now occupies,
     // for the caller's focus handling.
     async function showPreviewInSecondaryPane(document, sourceColumn) {
-        const sourceGroup = vscode.window.tabGroups.all.find(g => g.viewColumn === sourceColumn);
-        const target = (sourceGroup && isSafeTarget(sourceGroup))
-            ? null
-            : vscode.window.tabGroups.all.find(g => g.viewColumn !== sourceColumn && isSafeTarget(g))
-                || { viewColumn: Math.max(...vscode.window.tabGroups.all.map(g => g.viewColumn)) + 1 };
+        const groups = vscode.window.tabGroups.all;
+        const sourceGroup = groups.find(g => g.viewColumn === sourceColumn);
+        let target = null;
+        let decision = 'preview in place (source group is safe)';
+        if (!sourceGroup || !isSafeTarget(sourceGroup)) {
+            target = pickTargetGroup(groups, sourceColumn);
+            if (target) {
+                decision = isSafeTarget(target)
+                    ? `evacuate to safe col${target.viewColumn}`
+                    : `evacuate to preview-host col${target.viewColumn}`;
+            } else {
+                target = { viewColumn: Math.max(...groups.map(g => g.viewColumn)) + 1 };
+                decision = `evacuate to NEW col${target.viewColumn} (no safe or preview-host group)`;
+            }
+        }
+        channel.appendLine(
+            `[reveal] ${path.basename(document.uri.fsPath)} source=col${sourceColumn} -> ${decision}`);
+        logGroups();
 
         // Captured before we touch anything, so we can evacuate the source's
         // current group afterwards: showTextDocument into a different column
@@ -377,6 +451,11 @@ function activate(context) {
             // See shouldSkipReveal for the full rule. The manual command
             // (Cmd+Shift+M) is unaffected and still foregrounds on demand.
             if (shouldSkipReveal(doc.uri, editor.viewColumn)) {
+                const chat = foreignWebviewGroup();
+                channel.appendLine(
+                    `[skip] ${path.basename(doc.uri.fsPath)} at col${editor.viewColumn}: ` +
+                    `preview already visible or shares the pane ` +
+                    `(foreign webview group: ${chat ? 'col' + chat.viewColumn : 'none'})`);
                 // Cancel any reveal still pending for this file so a stale
                 // settle timer can't fire after we've decided it's already up.
                 clearTimeout(settleTimers.get(key));
@@ -429,7 +508,9 @@ module.exports = {
     isDiffEditor,
     isAnyPreviewTab,
     isPreviewTabFor,
+    isMarkdownSourceTab,
     isSafeTarget,
+    pickTargetGroup,
     foreignWebviewGroup,
     shouldSkipReveal,
 };

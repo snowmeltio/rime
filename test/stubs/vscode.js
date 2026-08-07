@@ -13,6 +13,9 @@ const vscode = {
             all: [],
         },
     },
+    workspace: {
+        textDocuments: [],
+    },
 };
 
 module.exports = vscode;

@@ -8,7 +8,9 @@ const {
     isDiffEditor,
     isAnyPreviewTab,
     isPreviewTabFor,
+    isMarkdownSourceTab,
     isSafeTarget,
+    pickTargetGroup,
     foreignWebviewGroup,
     shouldSkipReveal,
 } = require('../extension.js');
@@ -41,6 +43,7 @@ function makePreviewTab(basename, opts = {}) {
 // Reset the shared stub's mutable state before every test in this file.
 beforeEach(() => {
     vscode.window.tabGroups.all = [];
+    vscode.workspace.textDocuments = [];
 });
 
 // --- looksLikeMarkdown ---------------------------------------------------
@@ -175,9 +178,58 @@ describe('isPreviewTabFor', () => {
     });
 });
 
+// --- isMarkdownSourceTab -----------------------------------------------------
+
+describe('isMarkdownSourceTab', () => {
+    test('is true for a .md text tab', () => {
+        const tab = { input: new vscode.TabInputText(makeUri('/proj/a.md')) };
+        assert.equal(isMarkdownSourceTab(tab), true);
+    });
+
+    test('is true for a .markdown text tab', () => {
+        const tab = { input: new vscode.TabInputText(makeUri('/proj/a.markdown')) };
+        assert.equal(isMarkdownSourceTab(tab), true);
+    });
+
+    test('is true for an extensionless tab whose open document has markdown languageId (sniffed file)', () => {
+        const uri = makeUri('/proj/NOTES');
+        vscode.workspace.textDocuments = [{ uri, languageId: 'markdown' }];
+        const tab = { input: new vscode.TabInputText(uri) };
+        assert.equal(isMarkdownSourceTab(tab), true);
+    });
+
+    test('is false for an extensionless tab with no open document (e.g. restored after window reload)', () => {
+        const tab = { input: new vscode.TabInputText(makeUri('/proj/NOTES')) };
+        assert.equal(isMarkdownSourceTab(tab), false);
+    });
+
+    test('is false for an extensionless tab whose open document is not markdown', () => {
+        const uri = makeUri('/proj/Makefile');
+        vscode.workspace.textDocuments = [{ uri, languageId: 'makefile' }];
+        const tab = { input: new vscode.TabInputText(uri) };
+        assert.equal(isMarkdownSourceTab(tab), false);
+    });
+
+    test('is false for a non-text tab and for null', () => {
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview-markdown.preview';
+        assert.equal(isMarkdownSourceTab({ input, label: 'Preview a.md' }), false);
+        assert.equal(isMarkdownSourceTab(null), false);
+    });
+});
+
 // --- isSafeTarget -----------------------------------------------------
 
 describe('isSafeTarget', () => {
+    test('is true for a group containing a sniffed extensionless markdown tab (the v1.2.6 pane-proliferation bug)', () => {
+        const uri = makeUri('/proj/NOTES');
+        vscode.workspace.textDocuments = [{ uri, languageId: 'markdown' }];
+        const group = {
+            tabs: [makePreviewTab('NOTES'), { input: new vscode.TabInputText(uri) }],
+        };
+        assert.equal(isSafeTarget(group), true);
+    });
+
     test('is true for an empty group', () => {
         assert.equal(isSafeTarget({ tabs: [] }), true);
     });
@@ -220,6 +272,49 @@ describe('isSafeTarget', () => {
     test('extension matching is case-insensitive (.MD counts as markdown)', () => {
         const group = { tabs: [{ input: new vscode.TabInputText(makeUri('/proj/a.MD')) }] };
         assert.equal(isSafeTarget(group), true);
+    });
+});
+
+// --- pickTargetGroup -----------------------------------------------------
+
+describe('pickTargetGroup', () => {
+    function makeCodeTab(p) {
+        return { input: new vscode.TabInputText(makeUri(p)) };
+    }
+    function makeChatTab() {
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview.someChatView';
+        return { input, label: 'Chat' };
+    }
+
+    test('never returns the source group itself', () => {
+        const source = { viewColumn: 1, tabs: [] };
+        assert.equal(pickTargetGroup([source], 1), null);
+    });
+
+    test('tier 1: a strictly safe group wins', () => {
+        const chat = { viewColumn: 1, tabs: [makeChatTab()] };
+        const safe = { viewColumn: 3, tabs: [makePreviewTab('a.md'), makeCodeTab('/proj/a.md')] };
+        assert.strictEqual(pickTargetGroup([chat, safe], 1), safe);
+    });
+
+    test('tier 1 beats tier 2: a safe group is preferred over an earlier mixed preview-host group', () => {
+        const mixedHost = { viewColumn: 2, tabs: [makePreviewTab('a.md'), makeCodeTab('/proj/app.ts')] };
+        const safe = { viewColumn: 3, tabs: [makeCodeTab('/proj/b.md')] };
+        assert.strictEqual(pickTargetGroup([mixedHost, safe], 1), safe);
+    });
+
+    test('tier 2: with no safe group, a mixed group hosting a preview is reused instead of minting a new column', () => {
+        const chat = { viewColumn: 1, tabs: [makeChatTab()] };
+        const code = { viewColumn: 2, tabs: [makeCodeTab('/proj/app.ts')] };
+        const mixedHost = { viewColumn: 3, tabs: [makePreviewTab('a.md'), makeCodeTab('/proj/notes.pdf')] };
+        assert.strictEqual(pickTargetGroup([chat, code, mixedHost], 1), mixedHost);
+    });
+
+    test('tier 3: null when no group is safe and none hosts a preview (caller opens a new column)', () => {
+        const chat = { viewColumn: 1, tabs: [makeChatTab()] };
+        const code = { viewColumn: 2, tabs: [makeCodeTab('/proj/app.ts')] };
+        assert.equal(pickTargetGroup([chat, code], 1), null);
     });
 });
 
