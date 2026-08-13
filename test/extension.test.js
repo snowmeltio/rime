@@ -10,6 +10,7 @@ const {
     isPreviewTabFor,
     isMarkdownSourceTab,
     isSafeTarget,
+    hostsMarkdownPreview,
     pickTargetGroup,
     foreignWebviewGroup,
     shouldSkipReveal,
@@ -272,6 +273,35 @@ describe('isSafeTarget', () => {
     test('extension matching is case-insensitive (.MD counts as markdown)', () => {
         const group = { tabs: [{ input: new vscode.TabInputText(makeUri('/proj/a.MD')) }] };
         assert.equal(isSafeTarget(group), true);
+    });
+});
+
+// --- hostsMarkdownPreview -----------------------------------------------------
+
+describe('hostsMarkdownPreview', () => {
+    test('is true when a preview tab sits among foreign tabs (the v1.2.7 needless-evacuation case)', () => {
+        const toolOutput = { input: new vscode.TabInputText(makeUri('/virtual/tool output (yn9uwt)')) };
+        const planPreview = (() => {
+            const input = new vscode.TabInputWebview();
+            input.viewType = 'mainThreadWebview-claudePlanPreview';
+            return { input, label: '#164 follow-through: Wispr cross-check' };
+        })();
+        const group = { tabs: [makePreviewTab('invoice-review-table.md'), toolOutput, planPreview] };
+        assert.equal(hostsMarkdownPreview(group), true);
+    });
+
+    test('is false for a group with no preview tab (chat webviews and text tabs only)', () => {
+        const chat = (() => {
+            const input = new vscode.TabInputWebview();
+            input.viewType = 'mainThreadWebview-claudeVSCodePanel';
+            return { input, label: 'Claude Code' };
+        })();
+        const group = { tabs: [chat, { input: new vscode.TabInputText(makeUri('/proj/a.md')) }] };
+        assert.equal(hostsMarkdownPreview(group), false);
+    });
+
+    test('is false for an empty group', () => {
+        assert.equal(hostsMarkdownPreview({ tabs: [] }), false);
     });
 });
 

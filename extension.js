@@ -105,6 +105,13 @@ function isSafeTarget(group) {
     return group.tabs.every(tab => isAnyPreviewTab(tab) || isMarkdownSourceTab(tab));
 }
 
+// True when `group` already hosts a markdown preview tab (for any file). Such
+// a group is the user's de-facto view pane: foregrounding a preview there
+// can't bury content that wasn't already sharing a pane with a preview.
+function hostsMarkdownPreview(group) {
+    return group.tabs.some(isAnyPreviewTab);
+}
+
 // Choose the group to relocate a markdown source (and its preview) into, in
 // preference order (v1.2.7):
 //   1. a strictly safe group (isSafeTarget: all markdown, or empty) -- never
@@ -124,7 +131,7 @@ function isSafeTarget(group) {
 function pickTargetGroup(groups, sourceColumn) {
     const others = groups.filter(g => g.viewColumn !== sourceColumn);
     return others.find(isSafeTarget)
-        || others.find(g => g.tabs.some(isAnyPreviewTab))
+        || others.find(hostsMarkdownPreview)
         || null;
 }
 
@@ -314,7 +321,18 @@ function activate(context) {
         const sourceGroup = groups.find(g => g.viewColumn === sourceColumn);
         let target = null;
         let decision = 'preview in place (source group is safe)';
-        if (!sourceGroup || !isSafeTarget(sourceGroup)) {
+        // Also stay in place when the source's group already hosts a preview,
+        // even if other tabs make it unsafe. The evacuation rationale -- don't
+        // bury real content under the preview we're about to open -- doesn't
+        // apply when a preview is already up in this very group: whatever else
+        // is here was already sharing a pane with one. v1.2.7 evacuated in
+        // that case (live trace: a Claude Code tool-output document and a plan
+        // -preview webview sitting beside the file's own preview both failed
+        // isSafeTarget), and with the chat as the only other group it minted
+        // a pointless new column and left duplicate previews behind.
+        if (sourceGroup && !isSafeTarget(sourceGroup) && hostsMarkdownPreview(sourceGroup)) {
+            decision = 'preview in place (source group already hosts a preview)';
+        } else if (!sourceGroup || !isSafeTarget(sourceGroup)) {
             target = pickTargetGroup(groups, sourceColumn);
             if (target) {
                 decision = isSafeTarget(target)
@@ -510,6 +528,7 @@ module.exports = {
     isPreviewTabFor,
     isMarkdownSourceTab,
     isSafeTarget,
+    hostsMarkdownPreview,
     pickTargetGroup,
     foreignWebviewGroup,
     shouldSkipReveal,
