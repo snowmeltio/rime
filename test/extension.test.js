@@ -11,7 +11,8 @@ const {
     isMarkdownSourceTab,
     isSafeTarget,
     hostsMarkdownPreview,
-    pickTargetGroup,
+    hasForeignWebview,
+    planReveal,
     foreignWebviewGroup,
     shouldSkipReveal,
 } = require('../extension.js');
@@ -129,11 +130,25 @@ describe('isAnyPreviewTab', () => {
         assert.equal(isAnyPreviewTab(tab), true);
     });
 
-    test('is true when the label matches /preview/i even though the viewType does not mention markdown', () => {
+    test('is true when the label has the built-in "Preview <name>" shape even though the viewType does not mention markdown', () => {
         const input = new vscode.TabInputWebview();
         input.viewType = 'mainThreadWebview.someOtherView';
         const tab = { input, label: 'Preview notes.md' };
         assert.equal(isAnyPreviewTab(tab), true);
+    });
+
+    test('is true for a preview-typed webview whose label does not mention preview (e.g. a plan preview)', () => {
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview-claudePlanPreview';
+        const tab = { input, label: '#164 follow-through: Wispr cross-check' };
+        assert.equal(isAnyPreviewTab(tab), true);
+    });
+
+    test('is false for a chat tab whose title merely mentions "preview" mid-label', () => {
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview-claudeVSCodePanel';
+        const tab = { input, label: 'Fix RIME preview overlay in editor' };
+        assert.equal(isAnyPreviewTab(tab), false);
     });
 
     test('is false when neither viewType nor label indicate a preview', () => {
@@ -305,46 +320,94 @@ describe('hostsMarkdownPreview', () => {
     });
 });
 
-// --- pickTargetGroup -----------------------------------------------------
+// --- hasForeignWebview -----------------------------------------------------
 
-describe('pickTargetGroup', () => {
+describe('hasForeignWebview', () => {
+    function makeChatTab() {
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview-claudeVSCodePanel';
+        return { input, label: 'Claude Code' };
+    }
+
+    test('is true for a group containing a chat webview', () => {
+        const group = { tabs: [makeChatTab(), { input: new vscode.TabInputText(makeUri('/proj/a.md')) }] };
+        assert.equal(hasForeignWebview(group), true);
+    });
+
+    test('is false for a group with only preview webviews and text tabs', () => {
+        const group = {
+            tabs: [makePreviewTab('a.md'), { input: new vscode.TabInputText(makeUri('/proj/app.ts')) }],
+        };
+        assert.equal(hasForeignWebview(group), false);
+    });
+
+    test('is false for a preview-typed webview like a plan preview', () => {
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview-claudePlanPreview';
+        const group = { tabs: [{ input, label: '#164 follow-through' }] };
+        assert.equal(hasForeignWebview(group), false);
+    });
+});
+
+// --- planReveal -----------------------------------------------------
+
+describe('planReveal', () => {
     function makeCodeTab(p) {
         return { input: new vscode.TabInputText(makeUri(p)) };
     }
     function makeChatTab() {
         const input = new vscode.TabInputWebview();
-        input.viewType = 'mainThreadWebview.someChatView';
-        return { input, label: 'Chat' };
+        input.viewType = 'mainThreadWebview-claudeVSCodePanel';
+        return { input, label: 'Claude Code' };
     }
+    const chatGroup = (col) => ({ viewColumn: col, tabs: [makeChatTab()] });
 
-    test('never returns the source group itself', () => {
-        const source = { viewColumn: 1, tabs: [] };
-        assert.equal(pickTargetGroup([source], 1), null);
+    test('stays in place when the source group is all markdown', () => {
+        const chat = chatGroup(1);
+        const source = { viewColumn: 2, tabs: [makeCodeTab('/proj/CHANGELOG.md')] };
+        assert.equal(planReveal([chat, source], 2).column, 2);
     });
 
-    test('tier 1: a strictly safe group wins', () => {
-        const chat = { viewColumn: 1, tabs: [makeChatTab()] };
-        const safe = { viewColumn: 3, tabs: [makePreviewTab('a.md'), makeCodeTab('/proj/a.md')] };
-        assert.strictEqual(pickTargetGroup([chat, safe], 1), safe);
+    test('stays in place when the source group already hosts a preview beside foreign tabs (v1.2.8 trace case)', () => {
+        const chat = chatGroup(1);
+        const source = {
+            viewColumn: 2,
+            tabs: [makePreviewTab('invoice-review-table.md'), makeCodeTab('/proj/invoice-review-table.md'),
+                makeCodeTab('/virtual/tool output (yn9uwt)')],
+        };
+        assert.equal(planReveal([chat, source], 2).column, 2);
     });
 
-    test('tier 1 beats tier 2: a safe group is preferred over an earlier mixed preview-host group', () => {
-        const mixedHost = { viewColumn: 2, tabs: [makePreviewTab('a.md'), makeCodeTab('/proj/app.ts')] };
-        const safe = { viewColumn: 3, tabs: [makeCodeTab('/proj/b.md')] };
-        assert.strictEqual(pickTargetGroup([mixedHost, safe], 1), safe);
+    test('prefers a strictly safe group elsewhere over stacking in an unsafe source group', () => {
+        const source = { viewColumn: 1, tabs: [makeCodeTab('/proj/app.ts'), makeCodeTab('/proj/a.md')] };
+        const safe = { viewColumn: 2, tabs: [makeCodeTab('/proj/b.md')] };
+        assert.equal(planReveal([source, safe], 1).column, 2);
     });
 
-    test('tier 2: with no safe group, a mixed group hosting a preview is reused instead of minting a new column', () => {
-        const chat = { viewColumn: 1, tabs: [makeChatTab()] };
+    test('prefers a preview-host group elsewhere over stacking in an unsafe source group', () => {
+        const source = { viewColumn: 1, tabs: [makeCodeTab('/proj/app.ts'), makeCodeTab('/proj/a.md')] };
+        const host = { viewColumn: 2, tabs: [makePreviewTab('b.md'), makeCodeTab('/proj/other.ts')] };
+        assert.equal(planReveal([source, host], 1).column, 2);
+    });
+
+    test('stacks in place, not a new column, when the only other group is the chat (two-pane Quick Open case)', () => {
+        const chat = chatGroup(1);
+        const source = { viewColumn: 2, tabs: [makeCodeTab('/proj/app.ts'), makeCodeTab('/proj/a.md')] };
+        const plan = planReveal([chat, source], 2);
+        assert.equal(plan.column, 2);
+    });
+
+    test('evacuates a chat-hosted source to the working pane, not a new column (two-pane chat-link case)', () => {
+        const chat = chatGroup(1);
         const code = { viewColumn: 2, tabs: [makeCodeTab('/proj/app.ts')] };
-        const mixedHost = { viewColumn: 3, tabs: [makePreviewTab('a.md'), makeCodeTab('/proj/notes.pdf')] };
-        assert.strictEqual(pickTargetGroup([chat, code, mixedHost], 1), mixedHost);
+        const plan = planReveal([chat, code], 1);
+        assert.equal(plan.column, 2);
     });
 
-    test('tier 3: null when no group is safe and none hosts a preview (caller opens a new column)', () => {
-        const chat = { viewColumn: 1, tabs: [makeChatTab()] };
-        const code = { viewColumn: 2, tabs: [makeCodeTab('/proj/app.ts')] };
-        assert.equal(pickTargetGroup([chat, code], 1), null);
+    test('opens a new column only when every group hosts a foreign webview (chat-only window)', () => {
+        const chat = chatGroup(1);
+        const plan = planReveal([chat], 1);
+        assert.equal(plan.column, 2);
     });
 });
 

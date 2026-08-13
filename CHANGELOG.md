@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.9
+
+- Stacking tabs now beats minting panes. A new editor column is the last resort, used only when every existing group hosts a foreign webview (in practice: the chat is the only pane). When the source's group holds other content and no markdown pane exists elsewhere, the preview stacks in place — backgrounding a tab is recoverable with a click, while pane proliferation was the standing complaint. A source that lands in the chat's group evacuates to the working pane instead of a fresh column. Routing decisions live in one pure, tested function (`planReveal`).
+- Tighten preview-tab matching. The old label heuristic (`/preview/i` anywhere) classified a chat conversation titled "Fix RIME preview overlay" as a markdown preview, which under stacking rules could have made the chat group a routing target. The label fallback is now anchored to the built-in's exact `Preview <name>` shape; viewType matching now also accepts preview-typed webviews (e.g. a plan preview), so panes holding those are stackable rather than protected.
+
+## 1.2.8
+
+- Never evacuate a group that already holds a preview. A live trace showed reveals minting a new column while the source's group already had the file's own preview up — made "unsafe" by Claude Code artefacts sharing the pane (tool-output documents, plan-preview webviews). Foregrounding a preview where one is already up buries nothing new, so Rime now stays in place; the old behaviour also left duplicate previews across columns.
+
+## 1.2.7
+
+- Reuse the existing view pane instead of minting new columns. Two fixes: a sniffed extensionless markdown file no longer poisons its own pane against the safety check (markdown-ness now also checked via the open document's language, not just the file extension), and target selection prefers a pane already hosting a preview — even mixed with other tabs — over opening a fresh column.
+- Add a "Rime" output channel (Output panel → Rime) logging every reveal/skip decision with a per-group tab inventory and safety verdict, so routing issues are diagnosable from a live trace.
+
 ## 1.2.6
 
 - Fix the preview inconsistently landing in the secondary pane. v1.2.3/1.2.4's safe-target routing only ran when the source landed directly in the chat's own editor group — the one path that had actually been clicked through (a `.md` link inside the chat). Any other way of opening a markdown file (Explorer, Quick Open, switching to an already-open tab) skipped that routing entirely, since `markdown.showPreview` always opens the preview in whatever column is currently active (never "beside," that's a different command), so the source — and preview with it — stayed wherever VS Code's own open command happened to land it, including on top of a group showing real code. Evacuation now checks the source's own group against `isSafeTarget` directly, which naturally covers the chat case too (its webview tab always fails the check) as well as landing in any other unsafe group.

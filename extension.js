@@ -46,13 +46,19 @@ function isDiffEditor(editor) {
     return false;
 }
 
-// True when `tab` is a built-in markdown preview webview (for any file). The
-// preview is surfaced through the Tab API as a webview whose viewType is
-// "mainThreadWebview-markdown.preview" and whose label is "Preview <filename>".
+// True when `tab` is a preview-surface webview: the built-in markdown preview
+// (viewType "mainThreadWebview-markdown.preview", label "Preview <filename>")
+// or another preview-typed webview such as Claude Code's plan preview
+// (viewType contains "Preview"). Since v1.2.7 this classification grants a
+// group stacking rights -- Rime will happily land sources and previews beside
+// such tabs -- so the label fallback is anchored to the built-in's exact
+// "Preview <name>" shape rather than matching /preview/i anywhere: a chat
+// conversation merely *titled* something like "Fix RIME preview overlay" must
+// not count, or the chat group becomes a stacking target and gets buried.
 function isAnyPreviewTab(tab) {
     if (!tab || !(tab.input instanceof vscode.TabInputWebview)) return false;
-    const label = tab.label || '';
-    return (tab.input.viewType || '').includes('markdown') || /preview/i.test(label);
+    return /markdown|preview/i.test(tab.input.viewType || '') ||
+        /^preview\s/i.test(tab.label || '');
 }
 
 // True when `tab` is the markdown preview for the file `basename` specifically,
@@ -112,27 +118,60 @@ function hostsMarkdownPreview(group) {
     return group.tabs.some(isAnyPreviewTab);
 }
 
-// Choose the group to relocate a markdown source (and its preview) into, in
-// preference order (v1.2.7):
-//   1. a strictly safe group (isSafeTarget: all markdown, or empty) -- never
-//      disturbs anyone's real code;
-//   2. a group already hosting a markdown preview tab, even when mixed with
-//      other content. A pane already showing a preview is the user's de-facto
-//      view pane, and stacking there can't bury code that wasn't already
-//      sharing with a preview. This is what keeps a stray code tab, or a
-//      non-preview webview like a PDF viewer, from disqualifying the
-//      established view pane and forcing a fresh column on every reveal --
-//      previously target selection was binary (strictly safe or brand-new
-//      column), so one foreign tab in the view pane meant pane proliferation.
-//      Known trade-off: a preview tab stranded in the chat's group would make
-//      the chat group eligible here and bury the chat; routing never opens
-//      previews there, so only a pre-v1.2.3 leftover could set that up.
-//   3. null: no group qualifies; the caller opens a brand-new column.
-function pickTargetGroup(groups, sourceColumn) {
+// True when `group` contains a non-preview webview -- the chat, or any other
+// webview-based editor whose surface would be buried by stacking tabs on it.
+function hasForeignWebview(group) {
+    return group.tabs.some(tab =>
+        tab.input instanceof vscode.TabInputWebview && !isAnyPreviewTab(tab));
+}
+
+// Decide which column the source+preview pair should occupy. Returns
+// { column, reason }; column === sourceColumn means "stay in place".
+//
+// Policy (v1.2.9, per Murray): stacking tabs beats minting panes. Opening a
+// tab on top of code merely backgrounds it -- recoverable with a click --
+// whereas pane proliferation was the standing complaint, so a NEW column is
+// the last resort, reached only when every group hosts a foreign webview
+// (in practice: the chat is the only pane in the window). This relaxes
+// v1.2.4's "never land on real code"; only foreign-webview groups (the chat)
+// keep that protection. Order:
+//   1. in place, when the source group is all-markdown or already hosts a
+//      preview (a preview being up here means foregrounding one buries
+//      nothing that wasn't already sharing a pane with one);
+//   2. another group that is strictly safe, then one hosting a preview --
+//      the established view pane. Known trade-off, unchanged from v1.2.7: a
+//      preview tab stranded in the chat's group would make the chat a
+//      preview-host target and bury it; routing never opens previews there;
+//   3. in place regardless of content, when the source group has no foreign
+//      webview: backgrounding a tab in the pane the user opened the file
+//      into beats burying a different pane or opening a new column;
+//   4. the leftmost group without a foreign webview -- reached only when the
+//      source sits WITH a foreign webview (a .md link clicked in the chat);
+//   5. a fresh column past the highest existing one.
+function planReveal(groups, sourceColumn) {
+    const sourceGroup = groups.find(g => g.viewColumn === sourceColumn);
+    if (sourceGroup && isSafeTarget(sourceGroup)) {
+        return { column: sourceColumn, reason: 'in place: source group is safe' };
+    }
+    if (sourceGroup && hostsMarkdownPreview(sourceGroup)) {
+        return { column: sourceColumn, reason: 'in place: source group already hosts a preview' };
+    }
     const others = groups.filter(g => g.viewColumn !== sourceColumn);
-    return others.find(isSafeTarget)
-        || others.find(hostsMarkdownPreview)
-        || null;
+    const safe = others.find(isSafeTarget);
+    if (safe) return { column: safe.viewColumn, reason: `evacuate to safe col${safe.viewColumn}` };
+    const host = others.find(hostsMarkdownPreview);
+    if (host) return { column: host.viewColumn, reason: `evacuate to preview-host col${host.viewColumn}` };
+    if (sourceGroup && !hasForeignWebview(sourceGroup)) {
+        return { column: sourceColumn, reason: 'in place: stacking here beats a new column' };
+    }
+    const plain = others.find(g => !hasForeignWebview(g));
+    if (plain) {
+        return { column: plain.viewColumn, reason: `evacuate to working col${plain.viewColumn} (source shares a pane with a foreign webview)` };
+    }
+    return {
+        column: Math.max(...groups.map(g => g.viewColumn)) + 1,
+        reason: 'evacuate to NEW column (every group hosts a foreign webview)',
+    };
 }
 
 // The editor group hosting a non-preview webview — in practice the Claude Code
@@ -294,13 +333,14 @@ function activate(context) {
     // webview tab isn't markdown), so this subsumes the old chat-specific
     // check.
     //
-    // Target selection is three-tier (pickTargetGroup, v1.2.7): a strictly
-    // safe group first, then a group already hosting a markdown preview even
-    // if mixed with other content, and only then a brand-new column. VS Code
-    // creates editor groups on demand up to the requested column
-    // (columnToEditorGroup in VS Code's own source), so targeting one past
-    // the highest existing column always yields a fresh, empty group — never
-    // an occupied one.
+    // Where the pair lands is decided by planReveal (v1.2.9) — see its
+    // comment for the full preference order; the short version is that
+    // stacking tabs beats minting panes, and only foreign-webview groups
+    // (the chat) are protected from being stacked on. When a fresh column is
+    // the last resort, VS Code creates editor groups on demand up to the
+    // requested column (columnToEditorGroup in VS Code's own source), so
+    // targeting one past the highest existing column always yields a fresh,
+    // empty group — never an occupied one.
     //
     // The relocation itself opens the document directly in the target group's
     // exact viewColumn and closes the leftover tab in the source's old group,
@@ -313,38 +353,16 @@ function activate(context) {
     // diverge from our target entirely, which is how a verified-safe decision
     // could still end up landing on top of real code.
     //
-    // When the source's own group is already safe, target stays null and we
-    // just preview in place. Returns the column the markdown now occupies,
-    // for the caller's focus handling.
+    // When planReveal keeps the source column, target stays null and we just
+    // preview in place. Returns the column the markdown now occupies, for
+    // the caller's focus handling.
     async function showPreviewInSecondaryPane(document, sourceColumn) {
         const groups = vscode.window.tabGroups.all;
         const sourceGroup = groups.find(g => g.viewColumn === sourceColumn);
-        let target = null;
-        let decision = 'preview in place (source group is safe)';
-        // Also stay in place when the source's group already hosts a preview,
-        // even if other tabs make it unsafe. The evacuation rationale -- don't
-        // bury real content under the preview we're about to open -- doesn't
-        // apply when a preview is already up in this very group: whatever else
-        // is here was already sharing a pane with one. v1.2.7 evacuated in
-        // that case (live trace: a Claude Code tool-output document and a plan
-        // -preview webview sitting beside the file's own preview both failed
-        // isSafeTarget), and with the chat as the only other group it minted
-        // a pointless new column and left duplicate previews behind.
-        if (sourceGroup && !isSafeTarget(sourceGroup) && hostsMarkdownPreview(sourceGroup)) {
-            decision = 'preview in place (source group already hosts a preview)';
-        } else if (!sourceGroup || !isSafeTarget(sourceGroup)) {
-            target = pickTargetGroup(groups, sourceColumn);
-            if (target) {
-                decision = isSafeTarget(target)
-                    ? `evacuate to safe col${target.viewColumn}`
-                    : `evacuate to preview-host col${target.viewColumn}`;
-            } else {
-                target = { viewColumn: Math.max(...groups.map(g => g.viewColumn)) + 1 };
-                decision = `evacuate to NEW col${target.viewColumn} (no safe or preview-host group)`;
-            }
-        }
+        const plan = planReveal(groups, sourceColumn);
+        const target = plan.column === sourceColumn ? null : { viewColumn: plan.column };
         channel.appendLine(
-            `[reveal] ${path.basename(document.uri.fsPath)} source=col${sourceColumn} -> ${decision}`);
+            `[reveal] ${path.basename(document.uri.fsPath)} source=col${sourceColumn} -> ${plan.reason}`);
         logGroups();
 
         // Captured before we touch anything, so we can evacuate the source's
@@ -529,7 +547,8 @@ module.exports = {
     isMarkdownSourceTab,
     isSafeTarget,
     hostsMarkdownPreview,
-    pickTargetGroup,
+    hasForeignWebview,
+    planReveal,
     foreignWebviewGroup,
     shouldSkipReveal,
 };
