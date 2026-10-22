@@ -11,6 +11,7 @@ const {
     isMarkdownSourceTab,
     isSafeTarget,
     hostsMarkdownPreview,
+    isStackableWebview,
     hasForeignWebview,
     planReveal,
     foreignWebviewGroup,
@@ -349,6 +350,36 @@ describe('hasForeignWebview', () => {
     });
 });
 
+// --- isStackableWebview -----------------------------------------------------
+
+describe('isStackableWebview', () => {
+    function webviewTab(viewType, label) {
+        const input = new vscode.TabInputWebview();
+        input.viewType = viewType;
+        return { input, label };
+    }
+
+    test('is true for the Serac agents panel, with or without the mainThreadWebview prefix', () => {
+        assert.equal(isStackableWebview(webviewTab('mainThreadWebview-seracDetail', 'Agents')), true);
+        assert.equal(isStackableWebview(webviewTab('seracDetail', 'Agents')), true);
+    });
+
+    test('is false for the chat webview', () => {
+        assert.equal(isStackableWebview(webviewTab('mainThreadWebview-claudeVSCodePanel', 'Claude Code')), false);
+    });
+
+    test('is false for a text tab', () => {
+        assert.equal(isStackableWebview({ input: new vscode.TabInputText(makeUri('/proj/a.md')) }), false);
+    });
+
+    test('keeps a Serac-only group out of hasForeignWebview and foreignWebviewGroup', () => {
+        const group = { viewColumn: 2, tabs: [webviewTab('mainThreadWebview-seracDetail', 'Agents')] };
+        assert.equal(hasForeignWebview(group), false);
+        vscode.window.tabGroups.all = [group];
+        assert.equal(foreignWebviewGroup(), null);
+    });
+});
+
 // --- planReveal -----------------------------------------------------
 
 describe('planReveal', () => {
@@ -401,6 +432,15 @@ describe('planReveal', () => {
         const chat = chatGroup(1);
         const code = { viewColumn: 2, tabs: [makeCodeTab('/proj/app.ts')] };
         const plan = planReveal([chat, code], 1);
+        assert.equal(plan.column, 2);
+    });
+
+    test('evacuates a chat-hosted source onto the Serac agents pane, not a new column (chat + Serac case)', () => {
+        const chat = chatGroup(1);
+        const input = new vscode.TabInputWebview();
+        input.viewType = 'mainThreadWebview-seracDetail';
+        const serac = { viewColumn: 2, tabs: [{ input, label: 'Agents' }] };
+        const plan = planReveal([chat, serac], 1);
         assert.equal(plan.column, 2);
     });
 

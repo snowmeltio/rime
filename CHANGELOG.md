@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.10
+
+- Stack on Serac's agents panel instead of opening a new pane. Serac's detail view (viewType `seracDetail`) counted as a protected webview, the same as the chat, so a window holding only the chat and Serac had no group Rime would stack on, and every `.md` link clicked in the chat opened a fresh column. Serac's panel is now on a small allowlist of stackable webviews (`STACKABLE_WEBVIEW_TYPES`); the preview lands in its pane like any other working pane. The Rime output channel tags these tabs `(stackable)`.
+
 ## 1.2.9
 
 - Stacking tabs now beats minting panes. A new editor column is the last resort, used only when every existing group hosts a foreign webview (in practice: the chat is the only pane). When the source's group holds other content and no markdown pane exists elsewhere, the preview stacks in place — backgrounding a tab is recoverable with a click, while pane proliferation was the standing complaint. A source that lands in the chat's group evacuates to the working pane instead of a fresh column. Routing decisions live in one pure, tested function (`planReveal`).

@@ -118,11 +118,33 @@ function hostsMarkdownPreview(group) {
     return group.tabs.some(isAnyPreviewTab);
 }
 
-// True when `group` contains a non-preview webview -- the chat, or any other
+// Webviews that are fine to stack markdown tabs on top of, matched against
+// TabInputWebview.viewType (VS Code reports extension panels as
+// "mainThreadWebview-<viewType>", so a substring test covers both shapes).
+// v1.2.10: Serac's agents panel (viewType "seracDetail") is a monitoring
+// surface, not a conversation; Murray is happy for previews to share its
+// pane. Before this it counted as foreign, so a chat + Serac window had no
+// stackable group and every chat-clicked .md minted a new column.
+const STACKABLE_WEBVIEW_TYPES = [/seracDetail/i];
+
+function isStackableWebview(tab) {
+    if (!tab || !(tab.input instanceof vscode.TabInputWebview)) return false;
+    const viewType = tab.input.viewType || '';
+    return STACKABLE_WEBVIEW_TYPES.some(re => re.test(viewType));
+}
+
+// True when `tab` is a protected webview: not a preview surface and not on the
+// stackable allowlist. In practice the Claude Code chat, matched generically
+// so it survives a viewType rename.
+function isForeignWebviewTab(tab) {
+    return !!tab && tab.input instanceof vscode.TabInputWebview &&
+        !isAnyPreviewTab(tab) && !isStackableWebview(tab);
+}
+
+// True when `group` contains a protected webview -- the chat, or any other
 // webview-based editor whose surface would be buried by stacking tabs on it.
 function hasForeignWebview(group) {
-    return group.tabs.some(tab =>
-        tab.input instanceof vscode.TabInputWebview && !isAnyPreviewTab(tab));
+    return group.tabs.some(isForeignWebviewTab);
 }
 
 // Decide which column the source+preview pair should occupy. Returns
@@ -184,7 +206,7 @@ function planReveal(groups, sourceColumn) {
 function foreignWebviewGroup() {
     for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs) {
-            if (tab.input instanceof vscode.TabInputWebview && !isAnyPreviewTab(tab)) {
+            if (isForeignWebviewTab(tab)) {
                 return group;
             }
         }
@@ -242,7 +264,8 @@ function activate(context) {
             return `text:${name}${isMarkdownSourceTab(tab) ? '' : ' (non-md)'}`;
         }
         if (tab.input instanceof vscode.TabInputWebview) {
-            return `webview:${tab.input.viewType}${isAnyPreviewTab(tab) ? ' (preview)' : ''} "${tab.label}"`;
+            const kind = isAnyPreviewTab(tab) ? ' (preview)' : isStackableWebview(tab) ? ' (stackable)' : '';
+            return `webview:${tab.input.viewType}${kind} "${tab.label}"`;
         }
         return `other:"${tab.label}"`;
     };
@@ -547,6 +570,7 @@ module.exports = {
     isMarkdownSourceTab,
     isSafeTarget,
     hostsMarkdownPreview,
+    isStackableWebview,
     hasForeignWebview,
     planReveal,
     foreignWebviewGroup,
