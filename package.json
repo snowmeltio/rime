@@ -2,7 +2,7 @@
     "name": "rime",
     "displayName": "Rime",
     "description": "Auto-opens markdown preview when you open a markdown file. Clean reading view with bundled stylesheet.",
-    "version": "1.2.10",
+    "version": "1.2.11",
     "publisher": "snowmeltio",
     "license": "SEE LICENSE IN LICENSE.md",
     "repository": {
@@ -66,8 +66,8 @@
                     ],
                     "enumDescriptions": [
                         "Move focus into the preview — best for pure reading.",
-                        "Foreground the preview, then return focus to the source editor.",
-                        "Experimental: foreground the preview, then bounce focus back toward where it came from (e.g. an agent chat). VS Code cannot refocus arbitrary webviews, so this only returns to the chat if it occupies an editor column."
+                        "Kept for compatibility; behaves like preview. Rime opens the preview in the source's own editor group, so returning focus to the source would hide the preview it just opened. Only refocuses the source if the preview ever lands in a different group.",
+                        "Experimental: bounce focus back to an agent chat that occupies its own editor group. With the chat in the sidebar (or no chat group), focus stays in the preview."
                     ],
                     "default": "preview",
                     "markdownDescription": "Where keyboard focus lands after Rime foregrounds the markdown preview on tab activation."

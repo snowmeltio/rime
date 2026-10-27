@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.11
+
+- Fix the preview opening in a background tab when the Claude Code chat lives in the sidebar. With the chat out of the editor area there is usually one editor group, so the source and preview are tabs in the same group, and `rime.focusBehaviour: "source"` re-fronted the source tab straight after the preview opened, burying it. Rime always opens the preview in the source's own group, so `source` now behaves like `preview` (it would only refocus the source if the preview ever landed in a different group). The bug was latent in every layout and surfaced once the chat left the editor area. `preserve` now only bounces focus when the chat occupies its own editor group, so it no longer wraps onto the preview's group or jumps into an unrelated pane such as Serac's. The focus decision lives in one pure, tested function (`planFocus`).
+- Log every decision to the Rime output channel, not just reveals and skips: `[settle]`, `[bail]` (with the reason), `[swallow]`, `[ignore]`, `[sniff]`, `[focus]`, and an `[after]` line recording which tab actually ended up in front. An empty trace previously could not tell "no markdown opened" from "Rime gave up".
+
 ## 1.2.10
 
 - Stack on Serac's agents panel instead of opening a new pane. Serac's detail view (viewType `seracDetail`) counted as a protected webview, the same as the chat, so a window holding only the chat and Serac had no group Rime would stack on, and every `.md` link clicked in the chat opened a fresh column. Serac's panel is now on a small allowlist of stackable webviews (`STACKABLE_WEBVIEW_TYPES`); the preview lands in its pane like any other working pane. The Rime output channel tags these tabs `(stackable)`.

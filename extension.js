@@ -33,6 +33,10 @@ function looksLikeMarkdown(doc) {
     return false;
 }
 
+function baseName(uri) {
+    return path.basename(uri.fsPath || uri.path);
+}
+
 function hasFileExtension(uri) {
     const ext = path.extname(uri.fsPath || uri.path);
     return ext.length > 0;
@@ -194,6 +198,31 @@ function planReveal(groups, sourceColumn) {
         column: Math.max(...groups.map(g => g.viewColumn)) + 1,
         reason: 'evacuate to NEW column (every group hosts a foreign webview)',
     };
+}
+
+// Decide where focus goes after the preview foregrounds. Returns 'preview'
+// (leave it in the preview, no handback call), 'source' (refocus the source
+// editor in sourceColumn) or 'previousGroup' (bounce to the chat's group).
+//
+// v1.2.11: with the Claude Code chat in the sidebar there is usually one
+// editor group, so source and preview are tabs in the same group. Refocusing
+// the source there re-fronts its tab and buries the preview Rime just opened,
+// which defeats the whole point of the reveal. So:
+//   - 'source' only refocuses the source when the preview sits in a different
+//     group; in a shared group the preview stays in front.
+//   - 'preserve' only bounces when the chat occupies an editor group other
+//     than the preview's. Without one (chat in the sidebar), focusPreviousGroup
+//     either wraps onto the preview's own group or jumps into an unrelated
+//     pane such as Serac's, and can never reach a sidebar view.
+//   - 'preview' and unknown values leave focus in the preview.
+function planFocus(behaviour, { sourceColumn, previewColumn, chatColumn }) {
+    if (behaviour === 'source') {
+        return sourceColumn === previewColumn ? 'preview' : 'source';
+    }
+    if (behaviour === 'preserve') {
+        return chatColumn != null && chatColumn !== previewColumn ? 'previousGroup' : 'preview';
+    }
+    return 'preview';
 }
 
 // The editor group hosting a non-preview webview — in practice the Claude Code
@@ -420,7 +449,11 @@ function activate(context) {
         const live = vscode.window.visibleTextEditors.find(
             e => e.document.uri.toString() === key
         );
-        if (!live) return;
+        const name = baseName(vscode.Uri.parse(key));
+        if (!live) {
+            channel.appendLine(`[bail] ${name}: not in visibleTextEditors`);
+            return;
+        }
 
         // Only foreground when this markdown file is genuinely the active text
         // editor. If focus has moved elsewhere during the settle delay — to a
@@ -428,7 +461,11 @@ function activate(context) {
         // or terminal (activeTextEditor undefined) — leave focus where it is
         // rather than yanking it back. This is the v1.1.2/v1.1.3 hijack guard.
         const active = vscode.window.activeTextEditor;
-        if (!active || active.document.uri.toString() !== key) return;
+        if (!active || active.document.uri.toString() !== key) {
+            channel.appendLine(
+                `[bail] ${name}: activeTextEditor is ${active ? baseName(active.document.uri) : 'none'}`);
+            return;
+        }
 
         // Where focus lands after the preview foregrounds: 'preview' (focus the
         // preview, default), 'source' (return focus to the editor), 'preserve'
@@ -450,18 +487,38 @@ function activate(context) {
             const column = await showPreviewInSecondaryPane(live.document, live.viewColumn);
 
             // markdown.showPreview has no preserveFocus option — it always pulls
-            // focus into the preview webview. Hand focus back per the setting so
-            // the preview foregrounds without trapping the user in it.
-            if (behaviour === 'source') {
-                // Reliable: return focus to the source editor in its column.
+            // focus into the preview webview, which it opens in the active
+            // column. showPreviewInSecondaryPane has just made `column` active,
+            // so the preview sits there too. Hand focus back per the setting,
+            // via planFocus, which never re-fronts a source tab that shares
+            // the preview's group (v1.2.11).
+            const chat = foreignWebviewGroup();
+            const action = planFocus(behaviour, {
+                sourceColumn: column,
+                previewColumn: column,
+                chatColumn: chat ? chat.viewColumn : null,
+            });
+            channel.appendLine(
+                `[focus] ${name} behaviour=${behaviour} col${column} ` +
+                `chat=${chat ? 'col' + chat.viewColumn : 'none'} -> ${action}`);
+            if (action === 'source') {
+                // Return focus to the source editor in its own group.
                 await vscode.window.showTextDocument(live.document, column, false);
-            } else if (behaviour === 'preserve') {
-                // Best-effort: bounce focus back toward the group it came from
-                // (e.g. an agent chat in an adjacent editor column). VS Code has
+            } else if (action === 'previousGroup') {
+                // Bounce focus back toward the chat's editor group. VS Code has
                 // no API to refocus an arbitrary webview/panel, so this only
-                // returns to the chat if it occupies an editor group.
+                // works because planFocus checked the chat occupies a group.
                 await vscode.commands.executeCommand('workbench.action.focusPreviousGroup');
             }
+            // Record what actually ended up in front, so a buried preview
+            // shows up in the trace instead of being inferred.
+            setTimeout(() => {
+                const group = vscode.window.tabGroups.activeTabGroup;
+                const tab = group && group.activeTab;
+                channel.appendLine(
+                    `[after] ${name} col${group ? group.viewColumn : '?'} ` +
+                    `activeTab=${tab ? `"${tab.label}"` : 'none'}`);
+            }, 50);
         } finally {
             // Clear on a trailing tick, not synchronously: the activation event
             // our showTextDocument triggers is delivered asynchronously, often
@@ -479,18 +536,27 @@ function activate(context) {
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             if (!editor) return;
+            const doc = editor.document;
+            const name = baseName(doc.uri);
+            const isMd = doc.languageId === 'markdown';
             // Swallow only the activation our own reveal re-fires for the same
             // file; genuine switches to other files fall through.
-            if (revealingKey && editor.document.uri.toString() === revealingKey) return;
+            if (revealingKey && doc.uri.toString() === revealingKey) {
+                if (isMd) channel.appendLine(`[swallow] ${name}: self-induced activation`);
+                return;
+            }
 
-            const doc = editor.document;
-            if (isDiffEditor(editor)) return;
+            if (isDiffEditor(editor)) {
+                if (isMd) channel.appendLine(`[ignore] ${name}: diff context (scheme=${doc.uri.scheme})`);
+                return;
+            }
 
             // Sniff extensionless plaintext files for markdown content
             if (doc.languageId === 'plaintext' && !hasFileExtension(doc.uri)) {
                 const sniffKey = doc.uri.toString();
                 if (!sniffed.has(sniffKey) && looksLikeMarkdown(doc)) {
                     sniffed.add(sniffKey);
+                    channel.appendLine(`[sniff] ${name} -> markdown`);
                     // setTextDocumentLanguage re-fires the editor change event,
                     // so the preview logic runs on the re-fired (markdown) event.
                     vscode.languages.setTextDocumentLanguage(doc, 'markdown');
@@ -499,8 +565,11 @@ function activate(context) {
                 sniffed.add(sniffKey);
             }
 
-            if (doc.languageId !== 'markdown') return;
-            if (SKIP_SCHEMES.has(doc.uri.scheme)) return;
+            if (!isMd) return;
+            if (SKIP_SCHEMES.has(doc.uri.scheme)) {
+                channel.appendLine(`[ignore] ${name}: scheme=${doc.uri.scheme}`);
+                return;
+            }
 
             const key = doc.uri.toString();
 
@@ -527,6 +596,7 @@ function activate(context) {
             // switching to another file leaves the stale reveal to bail (its
             // active-editor check will no longer match).
             clearTimeout(settleTimers.get(key));
+            channel.appendLine(`[settle] ${name} at col${editor.viewColumn}`);
             settleTimers.set(key, setTimeout(() => {
                 settleTimers.delete(key);
                 revealPreview(key);
@@ -573,6 +643,7 @@ module.exports = {
     isStackableWebview,
     hasForeignWebview,
     planReveal,
+    planFocus,
     foreignWebviewGroup,
     shouldSkipReveal,
 };

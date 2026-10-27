@@ -13,7 +13,7 @@ Rime opens VS Code's built-in markdown preview whenever you open a `.md` file, a
 - **Smart skip** — won't trigger in git diffs, PR reviews, or merge conflicts.
 - **Edit-friendly** — the preview comes forward when you open or switch to a markdown file, but won't grab focus back when you click into the source to edit, whether the preview sits beside the editor or stacked in the same pane.
 - **Manual command** — `Cmd+Shift+M` (Mac) / `Ctrl+Shift+M` (Windows/Linux) to open preview on demand.
-- **Configurable focus** — set `rime.focusBehaviour` to choose where focus lands after the preview opens: `preview` (default), `source`, or `preserve`.
+- **Configurable focus** — set `rime.focusBehaviour` to choose where focus lands after the preview opens: `preview` (default), `source`, or `preserve`. Since 1.2.11, `source` behaves like `preview`: Rime opens the preview in the source's own editor group, so refocusing the source would hide it. `preserve` only returns focus to an agent chat that occupies its own editor group; with the chat in the sidebar, focus stays in the preview.
 
 ## Requirements
 

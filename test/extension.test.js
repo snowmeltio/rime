@@ -14,6 +14,7 @@ const {
     isStackableWebview,
     hasForeignWebview,
     planReveal,
+    planFocus,
     foreignWebviewGroup,
     shouldSkipReveal,
 } = require('../extension.js');
@@ -554,6 +555,104 @@ describe('shouldSkipReveal', () => {
         // sourceColumn (1) matches the chat group's column -> override forces false,
         // even though (per the previous test) an active preview elsewhere would
         // otherwise cause a skip.
+        assert.equal(shouldSkipReveal(uri, 1), false);
+    });
+});
+
+// --- planFocus (v1.2.11) -------------------------------------------------
+
+describe('planFocus', () => {
+    test("'source' keeps the preview in front when source and preview share a group (single-group bug)", () => {
+        assert.equal(planFocus('source', { sourceColumn: 1, previewColumn: 1, chatColumn: null }), 'preview');
+    });
+
+    test("'source' refocuses the source when the preview sits in a different group", () => {
+        assert.equal(planFocus('source', { sourceColumn: 1, previewColumn: 2, chatColumn: null }), 'source');
+    });
+
+    test("'preserve' stays in the preview when the chat is in the sidebar (no chat group)", () => {
+        assert.equal(planFocus('preserve', { sourceColumn: 1, previewColumn: 1, chatColumn: null }), 'preview');
+    });
+
+    test("'preserve' does not jump into a second (e.g. Serac) group when there is no chat group", () => {
+        assert.equal(planFocus('preserve', { sourceColumn: 2, previewColumn: 2, chatColumn: null }), 'preview');
+    });
+
+    test("'preserve' bounces to the chat when it occupies another editor group (old layout)", () => {
+        assert.equal(planFocus('preserve', { sourceColumn: 2, previewColumn: 2, chatColumn: 1 }), 'previousGroup');
+    });
+
+    test("'preserve' never bounces onto the preview's own group", () => {
+        assert.equal(planFocus('preserve', { sourceColumn: 2, previewColumn: 2, chatColumn: 2 }), 'preview');
+    });
+
+    test("'preview' and unknown values leave focus in the preview", () => {
+        assert.equal(planFocus('preview', { sourceColumn: 1, previewColumn: 2, chatColumn: 1 }), 'preview');
+        assert.equal(planFocus('bogus', { sourceColumn: 1, previewColumn: 2, chatColumn: 1 }), 'preview');
+        assert.equal(planFocus(undefined, { sourceColumn: 1, previewColumn: 1, chatColumn: null }), 'preview');
+    });
+});
+
+// --- single editor group (chat in the sidebar, v1.2.11) ---------------------
+
+describe('single-group layout', () => {
+    const codeTab = (p) => ({ input: new vscode.TabInputText(makeUri(p)) });
+    const webviewTab = (viewType, label) => {
+        const input = new vscode.TabInputWebview();
+        input.viewType = viewType;
+        return { input, label };
+    };
+
+    test('planReveal stays in place when the only group holds just the source (window10 trace case)', () => {
+        const plan = planReveal([{ viewColumn: 1, tabs: [codeTab('/proj/contact-form-spec.md')] }], 1);
+        assert.equal(plan.column, 1);
+        assert.match(plan.reason, /source group is safe/);
+    });
+
+    test('planReveal stacks in place beside code, never a new column', () => {
+        const plan = planReveal([{ viewColumn: 1, tabs: [codeTab('/proj/app.ts'), codeTab('/proj/a.md')] }], 1);
+        assert.equal(plan.column, 1);
+        assert.match(plan.reason, /stacking here beats a new column/);
+    });
+
+    test('planReveal stays in place beside a Serac tab', () => {
+        const group = { viewColumn: 1, tabs: [codeTab('/proj/a.md'), webviewTab('mainThreadWebview-seracDetail', 'Agents')] };
+        assert.equal(planReveal([group], 1).column, 1);
+    });
+
+    test('planReveal treats a plan-preview webview as safe company', () => {
+        const group = { viewColumn: 1, tabs: [codeTab('/proj/a.md'), webviewTab('mainThreadWebview-claudePlanPreview', 'Plan')] };
+        const plan = planReveal([group], 1);
+        assert.equal(plan.column, 1);
+        assert.match(plan.reason, /source group is safe/);
+    });
+
+    test('foreignWebviewGroup is null with the chat in the sidebar, even with Serac open', () => {
+        vscode.window.tabGroups.all = [{
+            viewColumn: 1,
+            tabs: [codeTab('/proj/a.md'), webviewTab('mainThreadWebview-seracDetail', 'Agents')],
+        }];
+        assert.equal(foreignWebviewGroup(), null);
+    });
+
+    test('shouldSkipReveal skips a same-group tab flip to the source (v1.2.2 rule, chat override inert)', () => {
+        const uri = makeUri('/proj/notes.md');
+        const src = codeTab('/proj/notes.md');
+        vscode.window.tabGroups.all = [{ viewColumn: 1, activeTab: src, tabs: [src, makePreviewTab('notes.md')] }];
+        assert.equal(shouldSkipReveal(uri, 1), true);
+    });
+
+    test('shouldSkipReveal does not skip when the group preview shows another file (retargeted dynamic preview)', () => {
+        const uri = makeUri('/proj/notes.md');
+        const src = codeTab('/proj/notes.md');
+        vscode.window.tabGroups.all = [{ viewColumn: 1, activeTab: src, tabs: [src, makePreviewTab('other.md')] }];
+        assert.equal(shouldSkipReveal(uri, 1), false);
+    });
+
+    test('shouldSkipReveal does not skip a first open (no preview yet)', () => {
+        const uri = makeUri('/proj/notes.md');
+        const src = codeTab('/proj/notes.md');
+        vscode.window.tabGroups.all = [{ viewColumn: 1, activeTab: src, tabs: [src] }];
         assert.equal(shouldSkipReveal(uri, 1), false);
     });
 });
